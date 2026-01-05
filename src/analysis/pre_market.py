@@ -316,6 +316,16 @@ class PreMarketAnalyst:
         
         return "\n\n---\n\n".join(reports)
 
+    def run_one(self, fund_code: str) -> str:
+        """
+        运行指定基金的盘前分析
+        """
+        target_fund = next((f for f in self.funds if f["code"] == fund_code), None)
+        if not target_fund:
+            return f"Error: Fund with code {fund_code} not found in configuration."
+        
+        return self.analyze_fund(target_fund)
+
 
 if __name__ == "__main__":
     analyst = PreMarketAnalyst()
