@@ -2,7 +2,52 @@ import akshare as ak
 import pandas as pd
 from datetime import datetime, timedelta
 import inspect
+import time
+import threading
 from typing import Dict, List, Optional
+
+
+_A_STOCK_SPOT_CACHE_LOCK = threading.Lock()
+_A_STOCK_SPOT_CACHE_FETCHED_AT: float = 0.0
+_A_STOCK_SPOT_CACHE_BY_CODE: Optional[Dict[str, Dict]] = None
+
+
+def _normalize_a_stock_code(stock_code: str) -> str:
+    if not stock_code:
+        return ""
+    stock_code = str(stock_code).strip()
+    # Common cases: "600519", "600519.SH", "SZ000001"
+    for part in (stock_code.split(".")[0], stock_code):
+        digits = "".join(ch for ch in part if ch.isdigit())
+        if len(digits) == 6:
+            return digits
+    return stock_code
+
+
+def _get_a_stock_spot_by_code_cached(cache_ttl_seconds: int = 30, force_refresh: bool = False) -> Optional[Dict[str, Dict]]:
+    """Return a cached mapping {code -> row_dict} built from ak.stock_zh_a_spot_em()."""
+    global _A_STOCK_SPOT_CACHE_FETCHED_AT, _A_STOCK_SPOT_CACHE_BY_CODE
+
+    now = time.time()
+    with _A_STOCK_SPOT_CACHE_LOCK:
+        if (
+            not force_refresh
+            and _A_STOCK_SPOT_CACHE_BY_CODE is not None
+            and (now - _A_STOCK_SPOT_CACHE_FETCHED_AT) < max(cache_ttl_seconds, 1)
+        ):
+            return _A_STOCK_SPOT_CACHE_BY_CODE
+
+        df = ak.stock_zh_a_spot_em()
+        if df is None or df.empty or '代码' not in df.columns:
+            _A_STOCK_SPOT_CACHE_BY_CODE = None
+            _A_STOCK_SPOT_CACHE_FETCHED_AT = now
+            return None
+
+        # Build once for O(1) lookups during holdings loops
+        by_code = df.set_index('代码').to_dict('index')
+        _A_STOCK_SPOT_CACHE_BY_CODE = by_code
+        _A_STOCK_SPOT_CACHE_FETCHED_AT = time.time()
+        return by_code
 
 # ============================================================================
 # SECTION 1: 全球宏观市场数据 (Global Macro Data)
@@ -257,22 +302,34 @@ def get_stock_announcement(stock_code: str, stock_name: str) -> List[Dict]:
         print(f"Error fetching announcements for {stock_name}: {e}")
     return announcements
 
-def get_stock_realtime_quote(stock_code: str) -> Dict:
+def get_stock_realtime_quote(
+    stock_code: str,
+    use_cache: bool = True,
+    cache_ttl_seconds: int = 30,
+    force_refresh: bool = False,
+) -> Dict:
     """
     获取个股实时/最新行情
     """
     try:
-        # 根据股票代码判断市场
-        if stock_code.startswith('6'):
-            full_code = f"sh{stock_code}"
-        elif stock_code.startswith(('0', '3')):
-            full_code = f"sz{stock_code}"
-        else:
-            full_code = stock_code
-            
+        code = _normalize_a_stock_code(stock_code)
+        if not code:
+            return {}
+
+        if use_cache:
+            by_code = _get_a_stock_spot_by_code_cached(
+                cache_ttl_seconds=cache_ttl_seconds,
+                force_refresh=force_refresh,
+            )
+            if by_code is not None:
+                row = by_code.get(code)
+                if row:
+                    return row
+
+        # Fallback: direct fetch
         df = ak.stock_zh_a_spot_em()
-        if not df.empty:
-            stock = df[df['代码'] == stock_code]
+        if df is not None and not df.empty:
+            stock = df[df['代码'] == code]
             if not stock.empty:
                 return stock.iloc[0].to_dict()
     except Exception as e:
@@ -420,3 +477,25 @@ def get_market_indices():
     except Exception as e:
         print(f"Error fetching market indices: {e}")
         return {}
+
+def get_all_fund_list() -> List[Dict]:
+    """
+    获取全市场所有基金列表
+    Returns: List of dicts with 'code', 'name', 'type', etc.
+    """
+    try:
+        # fund_name_em returns: 基金代码, 基金简称, 基金类型, 拼音缩写
+        df = ak.fund_name_em()
+        if not df.empty:
+            # Rename columns for consistency
+            # 基金代码 -> code, 基金简称 -> name, 基金类型 -> type, 拼音缩写 -> pinyin
+            df = df.rename(columns={
+                '基金代码': 'code',
+                '基金简称': 'name',
+                '基金类型': 'type',
+                '拼音缩写': 'pinyin'
+            })
+            return df[['code', 'name', 'type', 'pinyin']].to_dict('records')
+    except Exception as e:
+        print(f"Error fetching all fund list: {e}")
+    return []

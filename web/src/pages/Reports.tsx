@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import {
     Box,
     Typography,
-    Paper,
     List,
     ListItemButton,
     ListItemText,
@@ -11,16 +10,11 @@ import {
     CircularProgress,
     IconButton,
     Collapse,
-    Divider,
-    Stack,
     ListItemIcon,
     TextField,
     InputAdornment,
-    Avatar,
-    useTheme,
     Tooltip
 } from '@mui/material';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DownloadIcon from '@mui/icons-material/Download';
 import html2canvas from 'html2canvas';
@@ -34,37 +28,11 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import ReactMarkdown from 'react-markdown';
-import { fetchReports, fetchReportContent, generateReport } from '../api';
+import remarkGfm from 'remark-gfm';
+import { fetchReports, fetchReportContent } from '../api';
 import type { ReportSummary } from '../api'
 
-// Styled components or custom styles
-const reportPaperStyle = {
-    maxWidth: 900,
-    mx: 'auto',
-    minHeight: '80vh',
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-    boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
-    borderRadius: 2
-};
-
-const markdownStyles = {
-    '& h1': { fontSize: '1.8rem', fontWeight: 700, color: '#1e293b', mb: 2, borderBottom: '1px solid #e2e8f0', pb: 1 },
-    '& h2': { fontSize: '1.4rem', fontWeight: 600, color: '#334155', mt: 4, mb: 2 },
-    '& h3': { fontSize: '1.1rem', fontWeight: 600, color: '#475569', mt: 3, mb: 1.5 },
-    '& p': { fontSize: '1.05rem', lineHeight: 1.7, color: '#374151', mb: 2, fontFamily: '"Georgia", "Times New Roman", serif' },
-    '& ul, & ol': { mb: 2, pl: 3 },
-    '& li': { mb: 0.5, lineHeight: 1.6, fontFamily: '"Georgia", "Times New Roman", serif' },
-    '& strong': { color: '#111827', fontWeight: 600 },
-    '& blockquote': { borderLeft: '4px solid #3b82f6', pl: 2, py: 0.5, my: 2, bgcolor: '#eff6ff', borderRadius: '0 4px 4px 0', fontStyle: 'italic' },
-    '& table': { width: '100%', borderCollapse: 'collapse', mb: 3, mt: 2 },
-    '& th': { borderBottom: '2px solid #e2e8f0', textAlign: 'left', p: 1, fontWeight: 600, color: '#475569' },
-    '& td': { borderBottom: '1px solid #e2e8f0', p: 1, color: '#374151' }
-};
-
 export default function ReportsPage() {
-    const theme = useTheme();
     const [reports, setReports] = useState<ReportSummary[]>([]);
     const [selectedReport, setSelectedReport] = useState<ReportSummary | null>(null);
     const [reportContent, setReportContent] = useState<string>('');
@@ -149,7 +117,7 @@ export default function ReportsPage() {
             const canvas = await html2canvas(reportRef.current, {
                 scale: 2, // Higher quality
                 useCORS: true,
-                backgroundColor: '#ffffff',
+                backgroundColor: '#18181b', // Matches bg-surface
                 logging: false,
                 width: exportWidth,
                 windowWidth: exportWidth
@@ -212,7 +180,7 @@ export default function ReportsPage() {
                     key,
                     name,
                     code,
-                    reports: group.funds[key].sort((a, b) => (a.mode === 'pre' ? -1 : 1)) // Pre first
+                    reports: group.funds[key].sort((a, _b) => (a.mode === 'pre' ? -1 : 1)) // Pre first
                 };
             });
 
@@ -225,23 +193,15 @@ export default function ReportsPage() {
     }, [reports, searchQuery]);
 
     return (
-        <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden', bgcolor: '#F1F5F9' }}>
+        <div className="flex h-screen bg-background overflow-hidden text-slate-700">
             {/* Sidebar */}
-            <Box sx={{
-                width: 340,
-                borderRight: '1px solid #E2E8F0',
-                bgcolor: '#FFFFFF',
-                display: 'flex',
-                flexDirection: 'column',
-                flexShrink: 0,
-                zIndex: 10
-            }}>
+            <div className="w-[360px] border-r border-slate-200 bg-white flex flex-col flex-shrink-0 z-10">
                 {/* Header & Search */}
-                <Box sx={{ p: 2, borderBottom: '1px solid #E2E8F0' }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                        <Typography variant="h6" fontWeight={700} color="text.primary">Intelligence Library</Typography>
-                        <IconButton size="small" onClick={loadReports}><RefreshIcon /></IconButton>
-                    </Box>
+                <div className="p-4 border-b border-slate-200">
+                    <div className="flex justify-between items-center mb-4">
+                        <Typography variant="h6" className="font-bold text-slate-900 tracking-tight">Intelligence Library</Typography>
+                        <IconButton size="small" onClick={loadReports} className="text-slate-400 hover:text-slate-700"><RefreshIcon /></IconButton>
+                    </div>
                     <TextField
                         fullWidth
                         size="small"
@@ -249,27 +209,30 @@ export default function ReportsPage() {
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         InputProps={{
-                            startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" color="action" /></InputAdornment>,
+                            startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" className="text-slate-400" /></InputAdornment>,
                         }}
-                        sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#F8FAFC' } }}
+                        sx={{ 
+                            '& .MuiOutlinedInput-root': { bgcolor: '#f8fafc' },
+                            '& input': { color: '#0f172a' }
+                        }}
                     />
-                </Box>
+                </div>
 
                 {/* Hierarchical List */}
-                <Box sx={{ overflowY: 'auto', flex: 1, '&::-webkit-scrollbar': { width: '6px' }, '&::-webkit-scrollbar-thumb': { bgcolor: '#CBD5E1' } }}>
+                <div className="overflow-y-auto flex-1 custom-scrollbar">
                     <List component="nav" disablePadding>
                         {groupedData.map((group) => (
                             <Box key={group.date}>
                                 {/* Level 1: Date */}
-                                <ListItemButton onClick={() => toggleDate(group.date)} sx={{ bgcolor: '#F8FAFC', py: 1.5, borderBottom: '1px solid #F1F5F9' }}>
+                                <ListItemButton onClick={() => toggleDate(group.date)} className="bg-slate-50 py-3 border-b border-slate-100 hover:bg-slate-100">
                                     <ListItemIcon sx={{ minWidth: 32 }}>
-                                        <CalendarTodayIcon fontSize="small" sx={{ fontSize: 18, color: '#64748B' }} />
+                                        <CalendarTodayIcon fontSize="small" sx={{ fontSize: 16, color: '#64748b' }} />
                                     </ListItemIcon>
                                     <ListItemText
                                         primary={group.date}
-                                        primaryTypographyProps={{ fontWeight: 600, fontSize: '0.85rem', color: '#334155' }}
+                                        primaryTypographyProps={{ fontWeight: 600, fontSize: '0.8rem', color: '#334155', fontFamily: 'monospace' }}
                                     />
-                                    {expandedDates.has(group.date) ? <ExpandLess fontSize="small" sx={{ color: '#94A3B8' }} /> : <ExpandMore fontSize="small" sx={{ color: '#94A3B8' }} />}
+                                    {expandedDates.has(group.date) ? <ExpandLess fontSize="small" sx={{ color: '#94a3b8' }} /> : <ExpandMore fontSize="small" sx={{ color: '#94a3b8' }} />}
                                 </ListItemButton>
 
                                 <Collapse in={expandedDates.has(group.date)} timeout="auto" unmountOnExit>
@@ -279,18 +242,23 @@ export default function ReportsPage() {
                                         {group.overviews.map(report => (
                                             <ListItemButton
                                                 key={report.filename}
-                                                sx={{ pl: 6, borderLeft: selectedReport?.filename === report.filename ? '4px solid #3b82f6' : '4px solid transparent' }}
+                                                sx={{ 
+                                                    pl: 5, 
+                                                    borderLeft: selectedReport?.filename === report.filename ? '3px solid #2563eb' : '3px solid transparent',
+                                                    bgcolor: selectedReport?.filename === report.filename ? '#eff6ff' : 'transparent'
+                                                }}
                                                 selected={selectedReport?.filename === report.filename}
                                                 onClick={() => handleSelectReport(report)}
+                                                className="hover:bg-slate-50"
                                             >
                                                 <ListItemIcon sx={{ minWidth: 28 }}>
-                                                    <ArticleIcon fontSize="small" sx={{ fontSize: 18, color: report.mode === 'pre' ? '#3b82f6' : '#f59e0b' }} />
+                                                    <ArticleIcon fontSize="small" sx={{ fontSize: 18, color: report.mode === 'pre' ? '#2563eb' : '#d97706' }} />
                                                 </ListItemIcon>
                                                 <ListItemText
-                                                    primary={report.mode === 'pre' ? 'Daily Market Briefing' : 'Market Wrap-up'}
-                                                    secondary={report.mode === 'pre' ? 'Pre-Market' : 'Post-Market'}
-                                                    primaryTypographyProps={{ fontSize: '0.85rem', fontWeight: 500 }}
-                                                    secondaryTypographyProps={{ fontSize: '0.7rem' }}
+                                                    primary={report.mode === 'pre' ? 'Daily Briefing' : 'Market Wrap'}
+                                                    secondary={report.mode === 'pre' ? 'PRE-MARKET' : 'POST-MARKET'}
+                                                    primaryTypographyProps={{ fontSize: '0.85rem', fontWeight: 500, color: '#0f172a' }}
+                                                    secondaryTypographyProps={{ fontSize: '0.65rem', color: '#64748b', letterSpacing: '0.05em' }}
                                                 />
                                             </ListItemButton>
                                         ))}
@@ -303,43 +271,45 @@ export default function ReportsPage() {
                                                     <ListItemButton
                                                         onClick={() => toggleFund(`${group.date}-${fund.key}`)}
                                                         sx={{ pl: 4, py: 1 }}
+                                                        className="hover:bg-slate-50"
                                                     >
                                                         <ListItemIcon sx={{ minWidth: 28 }}>
-                                                            <BusinessCenterIcon fontSize="small" sx={{ fontSize: 18, color: '#94A3B8' }} />
+                                                            <BusinessCenterIcon fontSize="small" sx={{ fontSize: 18, color: '#94a3b8' }} />
                                                         </ListItemIcon>
                                                         <ListItemText
                                                             primary={fund.name}
                                                             secondary={fund.code}
-                                                            primaryTypographyProps={{ fontSize: '0.85rem', fontWeight: 600, color: '#475569' }}
-                                                            secondaryTypographyProps={{ fontSize: '0.7rem', fontFamily: 'monospace' }}
+                                                            primaryTypographyProps={{ fontSize: '0.85rem', fontWeight: 500, color: '#334155' }}
+                                                            secondaryTypographyProps={{ fontSize: '0.7rem', fontFamily: 'monospace', color: '#64748b' }}
                                                         />
-                                                        {isFundExpanded ? <ExpandLess fontSize="small" sx={{ fontSize: 16, color: '#CBD5E1' }} /> : <ExpandMore fontSize="small" sx={{ fontSize: 16, color: '#CBD5E1' }} />}
+                                                        {isFundExpanded ? <ExpandLess fontSize="small" sx={{ fontSize: 14, color: '#cbd5e1' }} /> : <ExpandMore fontSize="small" sx={{ fontSize: 14, color: '#cbd5e1' }} />}
                                                     </ListItemButton>
 
                                                     {/* Level 3: Fund Reports */}
                                                     <Collapse in={isFundExpanded} timeout="auto" unmountOnExit>
-                                                        <List component="div" disablePadding>
+                                                        <List component="div" disablePadding className="bg-slate-50/50">
                                                             {fund.reports.map(report => (
                                                                 <ListItemButton
                                                                     key={report.filename}
                                                                     sx={{
                                                                         pl: 8,
                                                                         py: 1,
-                                                                        borderLeft: selectedReport?.filename === report.filename ? '4px solid #3b82f6' : '4px solid transparent',
+                                                                        borderLeft: selectedReport?.filename === report.filename ? '3px solid #2563eb' : '3px solid transparent',
                                                                         bgcolor: selectedReport?.filename === report.filename ? '#eff6ff' : 'transparent'
                                                                     }}
                                                                     selected={selectedReport?.filename === report.filename}
                                                                     onClick={() => handleSelectReport(report)}
+                                                                    className="hover:bg-slate-100"
                                                                 >
                                                                     <ListItemIcon sx={{ minWidth: 24 }}>
                                                                         {report.mode === 'pre' ?
-                                                                            <TrendingUpIcon sx={{ fontSize: 16, color: '#3b82f6' }} /> :
-                                                                            <TrendingDownIcon sx={{ fontSize: 16, color: '#f59e0b' }} />
+                                                                            <TrendingUpIcon sx={{ fontSize: 16, color: '#2563eb' }} /> :
+                                                                            <TrendingDownIcon sx={{ fontSize: 16, color: '#d97706' }} />
                                                                         }
                                                                     </ListItemIcon>
                                                                     <ListItemText
-                                                                        primary={report.mode === 'pre' ? 'Pre-Market Strategy' : 'Post-Market Review'}
-                                                                        primaryTypographyProps={{ fontSize: '0.8rem' }}
+                                                                        primary={report.mode === 'pre' ? 'Strategy Analysis' : 'Performance Review'}
+                                                                        primaryTypographyProps={{ fontSize: '0.8rem', color: '#334155' }}
                                                                     />
                                                                 </ListItemButton>
                                                             ))}
@@ -353,99 +323,102 @@ export default function ReportsPage() {
                             </Box>
                         ))}
                     </List>
-                </Box>
-            </Box>
+                </div>
+            </div>
 
             {/* Right Content: Professional Report View */}
-            <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+            <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-50">
                 {/* Export Button Bar */}
                 {selectedReport && (
-                    <Box sx={{ p: 2, bgcolor: '#FFFFFF', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
-                        <Tooltip title="导出为长图片">
+                    <div className="p-3 border-b border-slate-200 bg-white/80 flex justify-end gap-2 backdrop-blur-sm">
+                        <Tooltip title="Download Image">
                             <Button
                                 variant="outlined"
                                 size="small"
                                 startIcon={exporting ? <CircularProgress size={16} /> : <DownloadIcon />}
                                 onClick={handleExportImage}
                                 disabled={exporting || loadingContent}
-                                sx={{ borderRadius: 2 }}
+                                className="border-slate-300 text-slate-600 hover:bg-slate-50 hover:border-slate-400"
                             >
-                                {exporting ? '导出中...' : '导出图片'}
+                                {exporting ? 'Processing...' : 'Export'}
                             </Button>
                         </Tooltip>
-                    </Box>
+                    </div>
                 )}
-                <Box sx={{ flex: 1, overflowY: 'auto', p: 4 }}>
+                
+                <div className="flex-1 overflow-y-auto p-6 md:p-10 custom-scrollbar">
                     {selectedReport ? (
-                        <Paper sx={reportPaperStyle} ref={reportRef}>
+                        <div 
+                            className="max-w-4xl mx-auto bg-white border border-slate-200 rounded-lg overflow-hidden min-h-[80vh] flex flex-col shadow-sm"
+                            ref={reportRef}
+                        >
                             {/* Report Header */}
-                            <Box sx={{
-                                p: 5,
-                                bgcolor: 'white',
-                                borderBottom: '1px solid #E2E8F0',
-                                backgroundImage: 'linear-gradient(to right, #ffffff, #f8fafc)'
-                            }}>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                    <Box>
-                                        <Typography variant="overline" color="text.secondary" fontWeight={600} letterSpacing={1.2}>
-                                            {selectedReport.is_summary ? 'MARKET INTELLIGENCE' : 'FUND ANALYSIS REPORT'}
+                            <div className="p-8 border-b border-slate-100 bg-slate-50/30">
+                                <div className="flex justify-between items-start mb-6">
+                                    <div>
+                                        <Typography variant="caption" className="text-primary-DEFAULT font-bold tracking-[0.2em] block mb-2">
+                                            {selectedReport.is_summary ? 'MARKET INTELLIGENCE' : 'FUND ANALYSIS'}
                                         </Typography>
-                                        <Typography variant="h4" fontWeight={800} sx={{ mt: 1, mb: 1, color: '#1e293b' }}>
+                                        <Typography variant="h4" className="text-slate-900 font-extrabold tracking-tight mb-2">
                                             {selectedReport.is_summary ? 'Daily Market Overview' : selectedReport.fund_name}
                                         </Typography>
                                         {!selectedReport.is_summary && (
-                                            <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                                                <Typography variant="h6" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-mono text-sm text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200">
                                                     {selectedReport.fund_code}
-                                                </Typography>
-                                            </Stack>
+                                                </span>
+                                            </div>
                                         )}
-                                    </Box>
+                                    </div>
                                     <Chip
-                                        icon={<AccessTimeIcon />}
+                                        icon={<AccessTimeIcon style={{ fontSize: 16 }} />}
                                         label={selectedReport.date}
-                                        sx={{ bgcolor: '#F1F5F9', fontWeight: 600, color: '#475569' }}
+                                        size="small"
+                                        className="bg-white border border-slate-200 text-slate-500 font-mono"
                                     />
-                                </Box>
+                                </div>
 
-                                <Stack direction="row" spacing={1} mt={3}>
+                                <div className="flex gap-2">
                                     <Chip
                                         label={selectedReport.mode === 'pre' ? 'PRE-MARKET' : 'POST-MARKET'}
-                                        color={selectedReport.mode === 'pre' ? 'primary' : 'warning'}
                                         size="small"
-                                        sx={{ fontWeight: 700, borderRadius: 1 }}
+                                        className={`${
+                                            selectedReport.mode === 'pre' 
+                                            ? 'bg-blue-50 text-blue-700 border border-blue-100' 
+                                            : 'bg-amber-50 text-amber-700 border border-amber-100'
+                                        } font-bold tracking-wider`}
                                     />
-                                </Stack>
-                            </Box>
+                                </div>
+                            </div>
 
                             {/* Report Body */}
-                            <Box sx={{ p: 6, flex: 1, bgcolor: '#FFFFFF' }}>
+                            <div className="p-8 md:p-12 flex-1 bg-white">
                                 {loadingContent ? (
-                                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 10 }}>
-                                        <CircularProgress size={30} thickness={4} />
-                                    </Box>
+                                    <div className="flex justify-center items-center h-64">
+                                        <CircularProgress size={40} thickness={4} />
+                                    </div>
                                 ) : (
-                                    <Box sx={markdownStyles} className="markdown-body">
-                                        <ReactMarkdown>{reportContent}</ReactMarkdown>
-                                    </Box>
+                                    <div className="markdown-body">
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{reportContent}</ReactMarkdown>
+                                    </div>
                                 )}
-                            </Box>
+                            </div>
 
                             {/* Footer */}
-                            <Box sx={{ p: 3, bgcolor: '#F8FAFC', borderTop: '1px solid #E2E8F0', textAlign: 'center' }}>
-                                <Typography variant="caption" color="text.secondary">
-                                    Generated by Deep Data Mining System • Confidential • {new Date().getFullYear()}
+                            <div className="p-4 bg-slate-50 border-t border-slate-100 text-center">
+                                <Typography variant="caption" className="text-slate-400 font-mono text-[10px] tracking-widest uppercase">
+                                    Generated by EastMoney Pro AI • Confidential • {new Date().getFullYear()}
                                 </Typography>
-                            </Box>
-                        </Paper>
+                            </div>
+                        </div>
                     ) : (
-                        <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100%', color: 'text.secondary' }}>
+                        <div className="flex flex-col justify-center items-center h-full text-slate-400">
                             <BusinessCenterIcon sx={{ fontSize: 60, opacity: 0.2, mb: 2 }} />
-                            <Typography variant="h6" color="text.disabled">Select a report to view analysis</Typography>
-                        </Box>
+                            <Typography variant="h6" className="font-light tracking-wide">Select a report to view analysis</Typography>
+                        </div>
                     )}
-                </Box>
-            </Box>
-        </Box>
+                </div>
+            </div>
+        </div>
     );
 }

@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -12,8 +13,24 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from src.analysis.pre_market import PreMarketAnalyst
 from src.analysis.post_market import PostMarketAnalyst
+from src.storage.db import init_db, get_active_funds, get_all_funds, upsert_fund, delete_fund, get_fund_by_code
+from src.scheduler.manager import scheduler_manager
+from src.report_gen import save_report
+from src.data_sources.akshare_api import get_all_fund_list
+from datetime import datetime
 
-app = FastAPI(title="EastMoney Report API")
+# --- Startup/Shutdown ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    print("Initializing Database...")
+    init_db()
+    print("Starting Scheduler...")
+    scheduler_manager.start()
+    yield
+    # Shutdown logic if needed
+
+app = FastAPI(title="EastMoney Report API", lifespan=lifespan)
 
 # Configure CORS
 origins = [
@@ -32,8 +49,10 @@ app.add_middleware(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORT_DIR = os.path.join(BASE_DIR, "reports")
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
-FUNDS_FILE = os.path.join(CONFIG_DIR, "funds.json")
 ENV_FILE = os.path.join(BASE_DIR, ".env")
+MARKET_FUNDS_CACHE = os.path.join(CONFIG_DIR, "market_funds_cache.json")
+
+# --- Models ---
 
 class ReportSummary(BaseModel):
     filename: str
@@ -41,13 +60,16 @@ class ReportSummary(BaseModel):
     mode: str # 'pre' or 'post'
     fund_code: Optional[str] = None
     fund_name: Optional[str] = None
-    is_summary: bool = True # True if it's a run_all report, False if specific fund
+    is_summary: bool = True # True if it's a run_all report or Summary
 
 class FundItem(BaseModel):
     code: str
     name: str
     style: Optional[str] = "Unknown"
     focus: Optional[List[str]] = []
+    pre_market_time: Optional[str] = None # HH:MM
+    post_market_time: Optional[str] = None # HH:MM
+    is_active: bool = True
 
 class SettingsUpdate(BaseModel):
     llm_provider: Optional[str] = None
@@ -106,17 +128,14 @@ async def list_reports():
     
     # Load funds for name mapping
     fund_map = {}
-    if os.path.exists(FUNDS_FILE):
-        try:
-            with open(FUNDS_FILE, "r", encoding="utf-8") as f:
-                funds_data = json.load(f)
-                for fund in funds_data:
-                    fund_map[fund["code"]] = fund["name"]
-        except:
-            pass
+    try:
+        funds = get_all_funds()
+        for f in funds:
+            fund_map[f['code']] = f['name']
+    except:
+        pass
 
     reports = []
-    # Pattern matching for YYYY-MM-DD_mode_report.md OR YYYY-MM-DD_mode_code_report.md
     files = glob.glob(os.path.join(REPORT_DIR, "*_report.md"))
     files.sort(key=os.path.getmtime, reverse=True) # Newest first
     
@@ -124,37 +143,37 @@ async def list_reports():
         filename = os.path.basename(f)
         try:
             # Expected formats:
-            # 1. 2026-01-05_pre_report.md (Summary) -> parts len 3
-            # 2. 2026-01-05_pre_005827_report.md (Specific) -> parts len 4
+            # 1. YYYY-MM-DD_mode_SUMMARY.md
+            # 2. YYYY-MM-DD_mode_CODE_NAME.md
             
             parts = filename.replace("_report.md", "").split("_")
-            
             if len(parts) < 2: continue
             
             date_str = parts[0]
             mode = parts[1]
             
-            if len(parts) == 2:
-                # Summary report
-                reports.append(ReportSummary(
+            if "SUMMARY" in filename:
+                 reports.append(ReportSummary(
                     filename=filename, 
                     date=date_str, 
                     mode=mode,
                     is_summary=True,
                     fund_name="Market Overview"
                 ))
-            elif len(parts) == 3:
-                # Specific fund report
-                code = parts[2]
-                name = fund_map.get(code, code)
-                reports.append(ReportSummary(
-                    filename=filename, 
-                    date=date_str, 
-                    mode=mode, 
-                    fund_code=code,
-                    fund_name=name,
-                    is_summary=False
-                ))
+            else:
+                 # Try to extract code. Assuming format YYYY-MM-DD_mode_CODE_NAME.md
+                 # If we used the new save_report function in src/report_gen.py
+                 if len(parts) >= 3:
+                     code = parts[2]
+                     name = fund_map.get(code, code)
+                     reports.append(ReportSummary(
+                        filename=filename, 
+                        date=date_str, 
+                        mode=mode, 
+                        fund_code=code,
+                        fund_name=name,
+                        is_summary=False
+                    ))
         except Exception as e:
             print(f"Error parsing filename {filename}: {e}")
             continue
@@ -172,8 +191,60 @@ async def get_report(filename: str):
     
     return {"content": content}
 
+@app.get("/api/market-funds")
+async def search_market_funds(query: str = ""):
+    funds = []
+    
+    # Check cache
+    if os.path.exists(MARKET_FUNDS_CACHE):
+        # Check modified time (e.g. 24h)
+        try:
+            mtime = os.path.getmtime(MARKET_FUNDS_CACHE)
+            if (datetime.now().timestamp() - mtime) < 86400:
+                with open(MARKET_FUNDS_CACHE, 'r', encoding='utf-8') as f:
+                    funds = json.load(f)
+        except Exception as e:
+            print(f"Cache read error: {e}")
+    
+    # If no funds from cache, fetch
+    if not funds:
+        print("Fetching fresh fund list from AkShare...")
+        funds = get_all_fund_list()
+        # Cache it
+        if funds:
+            try:
+                if not os.path.exists(CONFIG_DIR):
+                    os.makedirs(CONFIG_DIR)
+                with open(MARKET_FUNDS_CACHE, 'w', encoding='utf-8') as f:
+                    json.dump(funds, f, ensure_ascii=False)
+            except Exception as e:
+                print(f"Cache write error: {e}")
+            
+    # Filter
+    if not query:
+        return funds[:20] # Return top 20 if no query
+        
+    query = query.lower()
+    results = []
+    for f in funds:
+        # Match code (startswith) or name (contains) or pinyin (contains)
+        # Safe access with .get()
+        f_code = str(f.get('code', ''))
+        f_name = str(f.get('name', ''))
+        f_pinyin = str(f.get('pinyin', ''))
+        
+        if (f_code.startswith(query) or 
+            query in f_name.lower() or 
+            query in f_pinyin.lower()):
+            results.append(f)
+            
+            if len(results) >= 50: # Limit results
+                break
+                
+    return results
+
 @app.post("/api/generate/{mode}")
-async def generate_report(mode: str, request: GenerateRequest = None):
+async def generate_report_endpoint(mode: str, request: GenerateRequest = None):
     if mode not in ["pre", "post"]:
         raise HTTPException(status_code=400, detail="Invalid mode. Use 'pre' or 'post'.")
     
@@ -181,66 +252,79 @@ async def generate_report(mode: str, request: GenerateRequest = None):
 
     try:
         print(f"Generating {mode}-market report... (Fund: {fund_code if fund_code else 'ALL'})")
-        if mode == "pre":
-            analyst = PreMarketAnalyst()
-            if fund_code:
-                report_content = analyst.run_one(fund_code)
-            else:
-                report_content = analyst.run_all()
-        else:
-            analyst = PostMarketAnalyst()
-            if fund_code:
-                report_content = analyst.run_one(fund_code)
-            else:
-                report_content = analyst.run_all()
         
-        today = os.path.basename(os.path.abspath(__file__)) # dummy
-        from datetime import datetime
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        
-        if not os.path.exists(REPORT_DIR):
-            os.makedirs(REPORT_DIR)
-        
-        # If single fund, append to filename or specific logic?
-        # For simplicity, we just save it as a separate file or append.
-        # But user might want to view it.
-        # Let's save as `YYYY-MM-DD_{mode}_{code}_report.md` if single, else default.
-        
+        # Use Scheduler's worker logic to execute immediately
         if fund_code:
-            filename = f"{today_str}_{mode}_{fund_code}_report.md"
+            scheduler_manager.run_analysis_task(fund_code, mode)
+            return {"status": "success", "message": f"Task triggered for {fund_code}"}
         else:
-            filename = f"{today_str}_{mode}_report.md"
+            # If generating for ALL funds (Manual Trigger)
+            # We can iterate and run them
+            funds = get_active_funds()
+            results = []
+            for fund in funds:
+                try:
+                    scheduler_manager.run_analysis_task(fund['code'], mode)
+                    results.append(fund['code'])
+                except:
+                    pass
+            return {"status": "success", "message": f"Triggered tasks for {len(results)} funds"}
             
-        filepath = os.path.join(REPORT_DIR, filename)
-        
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(report_content)
-            
-        return {"status": "success", "filename": filename, "content": report_content}
-        
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/funds", response_model=List[FundItem])
-async def get_funds():
-    if not os.path.exists(FUNDS_FILE):
-        return []
+async def get_funds_endpoint():
     try:
-        with open(FUNDS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data
+        funds = get_all_funds()
+        # Convert JSON string focus to list if needed, DB layer handles dict conversion but 'focus' might be string
+        result = []
+        for f in funds:
+            item = dict(f)
+            if isinstance(item.get('focus'), str):
+                try:
+                    item['focus'] = json.loads(item['focus'])
+                except:
+                    item['focus'] = []
+            
+            # Convert SQLite Row to dict fully
+            result.append(FundItem(
+                code=item['code'],
+                name=item['name'],
+                style=item.get('style'),
+                focus=item['focus'],
+                pre_market_time=item.get('pre_market_time'),
+                post_market_time=item.get('post_market_time'),
+                is_active=bool(item.get('is_active', True))
+            ))
+        return result
     except Exception as e:
         print(f"Error reading funds: {e}")
         return []
 
 @app.post("/api/funds")
-async def save_funds(funds: List[FundItem]):
+async def save_fund_endpoint(fund: FundItem):
     try:
-        with open(FUNDS_FILE, "w", encoding="utf-8") as f:
-            # Convert pydantic models to dicts
-            json.dump([item.model_dump() for item in funds], f, ensure_ascii=False, indent=2)
+        fund_data = fund.model_dump()
+        upsert_fund(fund_data)
+        
+        # Sync with scheduler
+        scheduler_manager.add_fund_jobs(fund_data)
+        
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/funds/{code}")
+async def delete_fund_endpoint(code: str):
+    try:
+        delete_fund(code)
+        
+        # Sync with scheduler
+        scheduler_manager.remove_fund_jobs(code)
+        
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -248,12 +332,11 @@ async def save_funds(funds: List[FundItem]):
 @app.get("/api/settings")
 async def get_settings():
     env = load_env_file()
-    # Return masked keys for security
     def mask(key):
         val = env.get(key, "")
         if len(val) > 8:
             return val[:4] + "..." + val[-4:]
-        return val # Too short to mask meaningfully or empty
+        return val
     
     return {
         "llm_provider": env.get("LLM_PROVIDER", "gemini"),
@@ -279,4 +362,7 @@ async def update_settings(settings: SettingsUpdate):
 
 if __name__ == "__main__":
     import uvicorn
+    # Need to run init_db if running directly without lifespan
+    init_db()
+    scheduler_manager.start()
     uvicorn.run(app, host="0.0.0.0", port=8000)

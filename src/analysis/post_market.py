@@ -189,7 +189,7 @@ class PostMarketAnalyst:
             latest_quarter = holdings_df['季度'].iloc[0]
             holdings_df = holdings_df[holdings_df['季度'] == latest_quarter]
         
-        top_holdings = holdings_df.head(10)
+        top_holdings = holdings_df.head(5)
         holdings_list = []
         output = []
         

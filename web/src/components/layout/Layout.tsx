@@ -1,7 +1,5 @@
-import { useState } from 'react';
-import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { 
-  Box, 
   Drawer, 
   List, 
   ListItem, 
@@ -9,8 +7,6 @@ import {
   ListItemIcon, 
   ListItemText, 
   Typography, 
-  Divider,
-  Toolbar
 } from '@mui/material';
 import PieChartIcon from '@mui/icons-material/PieChart';
 import ArticleIcon from '@mui/icons-material/Article';
@@ -19,8 +15,8 @@ import SettingsIcon from '@mui/icons-material/Settings';
 const drawerWidth = 260;
 
 const MENU_ITEMS = [
-  { text: 'Fund Universe', icon: <PieChartIcon />, path: '/funds' },
-  { text: 'Reports', icon: <ArticleIcon />, path: '/reports' },
+  { text: 'Universe', icon: <PieChartIcon />, path: '/funds' },
+  { text: 'Intelligence', icon: <ArticleIcon />, path: '/reports' },
   { text: 'System', icon: <SettingsIcon />, path: '/settings' },
 ];
 
@@ -29,7 +25,7 @@ export default function Layout() {
   const location = useLocation();
 
   return (
-    <Box sx={{ display: 'flex' }}>
+    <div className="flex min-h-screen bg-background text-slate-900 font-sans">
       <Drawer
         variant="permanent"
         sx={{
@@ -38,46 +34,70 @@ export default function Layout() {
           [`& .MuiDrawer-paper`]: { 
             width: drawerWidth, 
             boxSizing: 'border-box',
+            borderRight: '1px solid #e2e8f0', // Slate 200
+            backgroundColor: '#ffffff', // White
           },
         }}
       >
-        <Toolbar sx={{ px: 3 }}>
-          <Typography variant="h6" color="primary" sx={{ fontWeight: 700 }}>
-            EastMoney Pro
-          </Typography>
-        </Toolbar>
-        <Divider />
-        <Box sx={{ overflow: 'auto', mt: 2 }}>
-          <List>
-            {MENU_ITEMS.map((item) => (
-              <ListItem key={item.text} disablePadding>
-                <ListItemButton 
-                  selected={location.pathname.startsWith(item.path)}
-                  onClick={() => navigate(item.path)}
-                >
-                  <ListItemIcon sx={{ minWidth: 40, color: location.pathname.startsWith(item.path) ? 'secondary.main' : 'text.secondary' }}>
-                    {item.icon}
-                  </ListItemIcon>
-                  <ListItemText 
-                    primary={item.text} 
-                    primaryTypographyProps={{ fontWeight: 500 }}
-                  />
-                </ListItemButton>
-              </ListItem>
-            ))}
-          </List>
-        </Box>
-        <Box sx={{ mt: 'auto', p: 2 }}>
-            <Typography variant="caption" color="text.secondary" display="block" align="center">
-                Gemini: <span style={{color: '#14B8A6'}}>Connected</span>
+        <div className="h-20 flex items-center px-6 border-b border-slate-200">
+          <div className="flex flex-col">
+            <Typography variant="h6" className="tracking-widest font-bold text-slate-900" sx={{ fontFamily: 'JetBrains Mono' }}>
+              EASTMONEY
+              <span className="text-primary-DEFAULT">.PRO</span>
             </Typography>
-        </Box>
+            <Typography variant="caption" className="text-slate-500 tracking-wider text-[0.65rem]">
+              INTELLIGENCE TERMINAL
+            </Typography>
+          </div>
+        </div>
+        
+        <div className="flex-1 py-6 px-3 overflow-y-auto">
+          <List className="space-y-2">
+            {MENU_ITEMS.map((item) => {
+               const isActive = location.pathname.startsWith(item.path);
+               return (
+                <ListItem key={item.text} disablePadding>
+                  <ListItemButton 
+                    selected={isActive}
+                    onClick={() => navigate(item.path)}
+                    sx={{
+                      borderRadius: '8px',
+                      mb: 0.5,
+                      '&.Mui-selected': {
+                        backgroundColor: '#eff6ff', // Blue 50
+                        borderLeft: '3px solid #2563eb', // Blue 600
+                        '&:hover': { backgroundColor: '#dbeafe' }, // Blue 100
+                      },
+                      '&:hover': {
+                        backgroundColor: '#f8fafc', // Slate 50
+                      }
+                    }}
+                  >
+                    <ListItemIcon sx={{ 
+                      minWidth: 40, 
+                      color: isActive ? '#2563eb' : '#64748b' 
+                    }}>
+                      {item.icon}
+                    </ListItemIcon>
+                    <ListItemText 
+                      primary={item.text} 
+                      primaryTypographyProps={{ 
+                        fontWeight: isActive ? 600 : 500,
+                        fontSize: '0.9rem',
+                        color: isActive ? '#1e293b' : '#64748b'
+                      }}
+                    />
+                  </ListItemButton>
+                </ListItem>
+              );
+            })}
+          </List>
+        </div>
       </Drawer>
 
-      <Box component="main" sx={{ flexGrow: 1, bgcolor: 'background.default', minHeight: '100vh', p: 0 }}>
-         {/* No Top App Bar by default, unless page needs it. Padding handled by pages or container */}
+      <main className="flex-grow bg-slate-50 p-0 overflow-auto">
         <Outlet />
-      </Box>
-    </Box>
+      </main>
+    </div>
   );
 }

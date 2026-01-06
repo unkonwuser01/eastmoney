@@ -4,5 +4,6 @@ tavily-python
 python-dotenv
 pandas
 openai
+apscheduler
 fastapi
 uvicorn

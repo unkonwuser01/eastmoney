@@ -30,6 +30,9 @@ export interface FundItem {
   name: string;
   style?: string;
   focus?: string[];
+  pre_market_time?: string; // HH:MM
+  post_market_time?: string; // HH:MM
+  is_active?: boolean;
 }
 
 export interface SettingsData {
@@ -51,8 +54,24 @@ export const fetchFunds = async (): Promise<FundItem[]> => {
   return response.data;
 };
 
-export const saveFunds = async (funds: FundItem[]): Promise<void> => {
-  await axios.post(`${API_BASE}/funds`, funds);
+export const saveFund = async (fund: FundItem): Promise<void> => {
+  await axios.post(`${API_BASE}/funds`, fund);
+};
+
+export const deleteFund = async (code: string): Promise<void> => {
+  await axios.delete(`${API_BASE}/funds/${code}`);
+};
+
+export interface MarketFund {
+    code: string;
+    name: string;
+    type: string;
+    pinyin: string;
+}
+
+export const searchMarketFunds = async (query: string): Promise<MarketFund[]> => {
+    const response = await axios.get(`${API_BASE}/market-funds`, { params: { query } });
+    return response.data;
 };
 
 export const fetchSettings = async (): Promise<SettingsData> => {
