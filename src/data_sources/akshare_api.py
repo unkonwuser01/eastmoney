@@ -10,60 +10,137 @@ from typing import Dict, List, Optional
 
 def get_us_market_overview() -> Dict:
     """
-    获取隔夜美股市场概览：三大指数 + 中概股指数
+    获取隔夜美股市场概览：三大指数
     Returns: {指数名: {最新价, 涨跌幅, ...}}
     """
     result = {}
     try:
-        # 美股主要指数 - 使用东方财富接口
-        df = ak.stock_us_famous_spot_em()
+        # 使用全球指数接口获取美股三大指数
+        df = ak.index_global_spot_em()
         if not df.empty:
-            for col in df.columns:
-                df[col] = df[col].astype(str) if df[col].dtype == 'object' else df[col]
+            # 美股三大指数代码
+            us_indices = {
+                '道琼斯': 'DJIA',
+                '纳斯达克': 'NDX', 
+                '标普500': 'SPX'
+            }
             
-            key_indices = ["道琼斯", "纳斯达克", "标普500"]
-            name_col = next((c for c in df.columns if '名称' in c or 'name' in c.lower()), df.columns[0])
-            
-            for idx_name in key_indices:
-                row = df[df[name_col].str.contains(idx_name, na=False)]
+            for name, code in us_indices.items():
+                row = df[df['代码'] == code]
                 if not row.empty:
-                    result[idx_name] = row.iloc[0].to_dict()
+                    r = row.iloc[0]
+                    result[name] = {
+                        '最新价': r.get('最新价', 'N/A'),
+                        '涨跌额': r.get('涨跌额', 'N/A'),
+                        '涨跌幅': f"{r.get('涨跌幅', 0)}%",
+                        '开盘价': r.get('开盘价', 'N/A'),
+                        '最高价': r.get('最高价', 'N/A'),
+                        '最低价': r.get('最低价', 'N/A'),
+                        '更新时间': r.get('最新行情时间', 'N/A')
+                    }
     except Exception as e:
         print(f"Error fetching US market: {e}")
     
-    return result
+    return result if result else {"说明": "美股数据暂时无法获取"}
 
 def get_a50_futures() -> Dict:
     """
-    获取富时A50期货数据（新加坡交易所）
-    用于预判A股开盘方向
+    获取富时A50相关指数数据
+    由于直接A50期货数据不稳定，使用全球指数中的新加坡/恒生指数作为亚太市场参考
     """
+    result = {}
     try:
-        # 尝试获取新加坡A50期货
-        df = ak.futures_global_spot()
+        # 方案1：从全球指数获取亚太市场数据
+        df = ak.index_global_spot_em()
         if not df.empty:
-            a50_row = df[df.iloc[:, 0].astype(str).str.contains('A50|富时|FTSE', na=False, case=False)]
-            if not a50_row.empty:
-                return a50_row.iloc[0].to_dict()
+            # 获取相关亚太指数
+            targets = {
+                '恒生指数': 'HSI',
+                '富时新加坡海峡时报': 'STI',
+                '日经225': 'N225'
+            }
+            for name, code in targets.items():
+                row = df[df['代码'] == code]
+                if not row.empty:
+                    r = row.iloc[0]
+                    result[name] = {
+                        '最新价': r.get('最新价', 'N/A'),
+                        '涨跌幅': r.get('涨跌幅', 'N/A'),
+                        '更新时间': r.get('最新行情时间', 'N/A')
+                    }
+        
+        # 方案2：尝试从SGX获取A50结算价（作为参考）
+        if not result:
+            try:
+                from datetime import datetime, timedelta
+                # 获取最近交易日
+                for i in range(5):
+                    date_str = (datetime.now() - timedelta(days=i)).strftime('%Y%m%d')
+                    try:
+                        sgx_df = ak.futures_settlement_price_sgx(date=date_str)
+                        if not sgx_df.empty:
+                            cn_data = sgx_df[sgx_df['COM'] == 'CN']
+                            if not cn_data.empty:
+                                latest = cn_data.iloc[0]
+                                result['富时A50(SGX结算价)'] = {
+                                    '日期': date_str,
+                                    '结算价': latest.get('SETTLE', 'N/A'),
+                                    '收盘价': latest.get('CLOSE', 'N/A')
+                                }
+                                break
+                    except:
+                        continue
+            except Exception as e:
+                print(f"SGX A50 fallback failed: {e}")
+                
     except Exception as e:
-        print(f"Error fetching A50 futures: {e}")
+        print(f"Error fetching A50/Asia index: {e}")
     
-    # 备用方案：返回空但不影响流程
-    return {"说明": "A50期货数据暂时无法获取，请关注盘前竞价"}
+    if not result:
+        return {"说明": "A50期货数据暂时无法获取，请关注盘前竞价"}
+    return result
 
 def get_forex_rates() -> Dict:
     """
     获取关键汇率：美元/人民币
     """
+    result = {}
     try:
         df = ak.fx_spot_quote()
         if not df.empty:
-            usdcny = df[df['货币对'].str.contains('USD/CNY|美元/人民币', na=False)]
+            # fx_spot_quote 返回的列是: 货币对, 买报价, 卖报价
+            usdcny = df[df['货币对'].str.contains('USD/CNY', na=False, case=False)]
             if not usdcny.empty:
-                return {"美元/人民币": usdcny.iloc[0].to_dict()}
+                row = usdcny.iloc[0]
+                result["美元/人民币"] = {
+                    "货币对": row.get('货币对', 'USD/CNY'),
+                    "买入价": row.get('买报价', 'N/A'),
+                    "卖出价": row.get('卖报价', 'N/A')
+                }
+            
+            # 获取其他重要汇率
+            eurcny = df[df['货币对'].str.contains('EUR/CNY', na=False, case=False)]
+            if not eurcny.empty:
+                row = eurcny.iloc[0]
+                result["欧元/人民币"] = {
+                    "买入价": row.get('买报价', 'N/A'),
+                    "卖出价": row.get('卖报价', 'N/A')
+                }
     except Exception as e:
         print(f"Error fetching forex: {e}")
-    return {}
+    
+    # 备选方案：使用百度汇率
+    if not result:
+        try:
+            fx_data = ak.fx_quote_baidu()
+            if not fx_data.empty:
+                usd = fx_data[fx_data['货币'].str.contains('美元', na=False)]
+                if not usd.empty:
+                    result["美元/人民币"] = {"最新价": usd.iloc[0].get('现汇买入价', 'N/A')}
+        except Exception as e:
+            print(f"Baidu forex fallback failed: {e}")
+    
+    return result if result else {"说明": "汇率数据暂时无法获取"}
 
 def get_global_macro_summary() -> Dict:
     """
@@ -82,41 +159,66 @@ def get_global_macro_summary() -> Dict:
 def get_northbound_flow() -> Dict:
     """
     获取北向资金（沪股通+深股通）净流入数据
+    使用 stock_hsgt_fund_flow_summary_em 获取实时汇总数据
     """
     result = {}
     try:
-        # 尝试多个可能的API
-        df = None
-        api_funcs = [
-            lambda: ak.stock_hsgt_hist_em(symbol="北向资金"),
-            lambda: ak.stock_em_hsgt_north_net_flow_in(indicator="沪股通"),
-        ]
-        
-        for func in api_funcs:
-            try:
-                df = func()
-                if df is not None and not df.empty:
-                    break
-            except:
-                continue
-        
-        if df is not None and not df.empty:
-            # 最近5个交易日
-            recent = df.tail(5)
-            result['近5日数据'] = recent.to_dict('records')
-            result['最新净流入'] = df.iloc[-1].to_dict()
-            
-            # 尝试计算5日累计
-            for col in df.columns:
-                if '净' in str(col) and '流' in str(col):
+        # 方案1：使用实时汇总数据（最可靠）
+        df = ak.stock_hsgt_fund_flow_summary_em()
+        if not df.empty:
+            # 筛选北向资金（沪股通+深股通）
+            north = df[df['资金方向'] == '北向']
+            if not north.empty:
+                total_net = 0
+                for _, row in north.iterrows():
+                    board = row.get('板块', '')
+                    net_buy = row.get('成交净买额', 0)
                     try:
-                        result['5日累计净流入'] = round(recent[col].astype(float).sum(), 2)
+                        net_buy = float(net_buy) if net_buy else 0
                     except:
-                        pass
-                    break
+                        net_buy = 0
+                    total_net += net_buy
+                    result[board] = {
+                        '成交净买额': f"{net_buy:.2f}亿",
+                        '交易状态': '交易中' if row.get('交易状态') == 1 else '休市',
+                        '相关指数': row.get('相关指数', 'N/A'),
+                        '指数涨跌幅': f"{row.get('指数涨跌幅', 0)}%"
+                    }
+                result['最新净流入'] = f"{total_net:.2f}亿"
+                # 确保日期是字符串格式
+                trade_date = df.iloc[0].get('交易日', 'N/A')
+                if hasattr(trade_date, 'strftime'):
+                    trade_date = trade_date.strftime('%Y-%m-%d')
+                result['数据日期'] = str(trade_date)
+        
+        # 方案2：获取历史数据计算5日累计（如果方案1成功后补充）
+        if result:
+            try:
+                hist_df = ak.stock_hsgt_hist_em(symbol="北向资金")
+                if hist_df is not None and not hist_df.empty:
+                    # 获取最近有数据的5日
+                    # 检查哪个列有净流入数据
+                    flow_col = None
+                    for col in ['当日成交净买额', '当日资金流入', '资金流入']:
+                        if col in hist_df.columns:
+                            # 过滤掉NaN值
+                            valid = hist_df[hist_df[col].notna()]
+                            if not valid.empty:
+                                flow_col = col
+                                recent = valid.tail(5)
+                                try:
+                                    total_5d = recent[col].astype(float).sum()
+                                    result['5日累计净流入'] = f"{total_5d:.2f}亿"
+                                except:
+                                    pass
+                                break
+            except Exception as e:
+                print(f"Historical northbound data failed: {e}")
+                
     except Exception as e:
         print(f"Error fetching northbound flow: {e}")
-    return result
+    
+    return result if result else {"说明": "北向资金数据暂时无法获取"}
 
 def get_industry_capital_flow(industry: str = None) -> Dict:
     """

@@ -3,6 +3,7 @@ import os
 import sys
 from typing import List, Dict, Optional
 from datetime import datetime
+from itertools import cycle
 
 # Add project root to sys.path to import config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -20,7 +21,15 @@ class WebSearch:
     def __init__(self):
         if not TAVILY_API_KEY:
             raise ValueError("TAVILY_API_KEY is not set in environment variables.")
-        self.client = TavilyClient(api_key=TAVILY_API_KEY)
+        
+        # Support multiple keys separated by comma
+        keys = [k.strip() for k in TAVILY_API_KEY.split(',') if k.strip()]
+        if not keys:
+            raise ValueError("No valid TAVILY_API_KEY found.")
+            
+        self.clients = [TavilyClient(api_key=key) for key in keys]
+        self.client_cycle = cycle(self.clients)
+        print(f"WebSearch initialized with {len(keys)} Tavily keys.")
         
         # 高质量财经信源域名
         self.quality_domains = [
@@ -36,12 +45,17 @@ class WebSearch:
             "finance.sina.com.cn" # 新浪财经
         ]
 
+    def _get_client(self):
+        """Get the next client in the rotation"""
+        return next(self.client_cycle)
+
     def search_news(self, query: str, max_results: int = 5) -> List[Dict]:
         """
         Search for news articles related to the query.
         """
         try:
-            response = self.client.search(
+            client = self._get_client()
+            response = client.search(
                 query=query,
                 search_depth="advanced",
                 topic="news",
@@ -60,7 +74,8 @@ class WebSearch:
         General web search (not restricted to news).
         """
         try:
-            response = self.client.search(
+            client = self._get_client()
+            response = client.search(
                 query=query,
                 search_depth="advanced",
                 max_results=max_results

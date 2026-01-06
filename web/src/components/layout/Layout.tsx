@@ -19,8 +19,8 @@ import SettingsIcon from '@mui/icons-material/Settings';
 const drawerWidth = 260;
 
 const MENU_ITEMS = [
-  { text: 'Reports', icon: <ArticleIcon />, path: '/reports' },
   { text: 'Fund Universe', icon: <PieChartIcon />, path: '/funds' },
+  { text: 'Reports', icon: <ArticleIcon />, path: '/reports' },
   { text: 'System', icon: <SettingsIcon />, path: '/settings' },
 ];
 

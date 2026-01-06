@@ -45,6 +45,7 @@ class PreMarketAnalyst:
         self.llm = get_llm_client()
         self.funds = self._load_funds()
         self.today = datetime.now().strftime("%Y-%m-%d")
+        self.sources = []  # 数据来源追踪
         
     def _load_funds(self) -> List[Dict]:
         if not os.path.exists(FUNDS_FILE):
@@ -52,6 +53,65 @@ class PreMarketAnalyst:
             return []
         with open(FUNDS_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
+
+    # =========================================================================
+    # Source Tracking Utilities
+    # =========================================================================
+    
+    def _reset_sources(self):
+        """每次分析新基金前重置来源列表"""
+        self.sources = []
+    
+    def _add_source(self, category: str, title: str, url: str = None, source_name: str = None):
+        """添加一个数据来源"""
+        source_entry = {
+            'category': category,  # e.g., '宏观新闻', '持仓公告', '研报', '政策'
+            'title': title[:100] if title else 'N/A',
+            'url': url,
+            'source': source_name
+        }
+        # 避免重复
+        if not any(s['title'] == source_entry['title'] and s['url'] == source_entry['url'] for s in self.sources):
+            self.sources.append(source_entry)
+    
+    def _format_sources(self) -> str:
+        """格式化数据来源为报告附录"""
+        if not self.sources:
+            return ""
+        
+        output = []
+        output.append("\n\n---")
+        output.append("\n## 📚 数据来源 (Sources Used in This Report)")
+        
+        # 按类别分组
+        categories = {}
+        for source in self.sources:
+            cat = source['category']
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(source)
+        
+        # 格式化输出
+        for cat, items in categories.items():
+            output.append(f"\n### {cat}")
+            for i, item in enumerate(items, 1):
+                title = item['title']
+                url = item['url']
+                source_name = item.get('source', '')
+                
+                if url:
+                    output.append(f"{i}. [{title}]({url})")
+                else:
+                    source_suffix = f" - {source_name}" if source_name else ""
+                    output.append(f"{i}. {title}{source_suffix}")
+        
+        # 固定数据源说明
+        output.append("\n### 📊 市场数据来源")
+        output.append("- AkShare: A股指数、北向资金、行业资金流向")
+        output.append("- 东方财富: 基金持仓数据")
+        output.append("- Tavily Search API: 实时新闻与研报搜索")
+        
+        return "\n".join(output)
 
     # =========================================================================
     # Layer 1: 全球宏观数据收集
@@ -75,14 +135,29 @@ class PreMarketAnalyst:
                     change = data.get('涨跌幅', data.get('涨跌', 'N/A'))
                     output.append(f"- {name}: {price} ({change})")
         
-        # A50期货
+        # A50期货 / 亚太指数
         if macro_data.get("A50期货"):
-            output.append("\n**富时A50期货:**")
-            a50 = macro_data["A50期货"]
-            if isinstance(a50, dict):
-                output.append(f"- 最新: {a50.get('收盘', 'N/A')}")
-                if '夜盘涨跌幅' in a50:
-                    output.append(f"- 夜盘涨跌: {a50['夜盘涨跌幅']}%")
+            a50_data = macro_data["A50期货"]
+            if isinstance(a50_data, dict):
+                # 检查是否是旧格式（直接有收盘字段）还是新格式（多个指数）
+                if '说明' in a50_data:
+                    output.append(f"\n**亚太市场:** {a50_data.get('说明', 'N/A')}")
+                elif '收盘' in a50_data:
+                    # 旧格式
+                    output.append("\n**富时A50期货:**")
+                    output.append(f"- 最新: {a50_data.get('收盘', 'N/A')}")
+                    if '夜盘涨跌幅' in a50_data:
+                        output.append(f"- 夜盘涨跌: {a50_data['夜盘涨跌幅']}%")
+                else:
+                    # 新格式：多个亚太指数
+                    output.append("\n**亚太市场指数:**")
+                    for idx_name, idx_data in a50_data.items():
+                        if isinstance(idx_data, dict):
+                            price = idx_data.get('最新价', 'N/A')
+                            change = idx_data.get('涨跌幅', 'N/A')
+                            if change != 'N/A':
+                                change = f"{change}%" if not str(change).endswith('%') else change
+                            output.append(f"- {idx_name}: {price} ({change})")
         
         # 汇率
         if macro_data.get("汇率"):
@@ -98,7 +173,15 @@ class PreMarketAnalyst:
         if macro_news:
             output.append("\n**隔夜重要事件:**")
             for news in macro_news:
-                output.append(f"- {news.get('title', news.get('content', '')[:100])}")
+                title = news.get('title', news.get('content', '')[:100])
+                output.append(f"- {title}")
+                # 追踪来源
+                self._add_source(
+                    category="🌍 宏观新闻",
+                    title=title,
+                    url=news.get('url'),
+                    source_name=news.get('source', 'Web Search')
+                )
         
         return "\n".join(output) if output else "全球宏观数据暂时无法获取"
 
@@ -181,6 +264,7 @@ class PreMarketAnalyst:
         
         holdings_str = "\n".join(holdings_output)
         
+
         # 深度分析Top 5持仓
         print("  🔍 深度分析重仓股...")
         deep_dive_output = []
@@ -188,7 +272,6 @@ class PreMarketAnalyst:
         for holding in holdings_list[:5]:
             stock_name = holding['name']
             stock_code = holding['code']
-            print(f"    - 分析 {stock_name}...")
             
             deep_dive_output.append(f"\n**{stock_name}:**")
             
@@ -201,6 +284,13 @@ class PreMarketAnalyst:
                 for ann in search_results['announcements'][:2]:
                     title = ann.get('title', ann.get('content', ''))[:80]
                     deep_dive_output.append(f"    - {title}")
+                    # 追踪来源
+                    self._add_source(
+                        category="📢 公司公告",
+                        title=f"[{stock_name}] {title}",
+                        url=ann.get('url'),
+                        source_name=ann.get('source', 'Web Search')
+                    )
             
             # 研报
             if search_results.get('analyst_reports'):
@@ -208,6 +298,13 @@ class PreMarketAnalyst:
                 for report in search_results['analyst_reports'][:2]:
                     title = report.get('title', report.get('content', ''))[:80]
                     deep_dive_output.append(f"    - {title}")
+                    # 追踪来源
+                    self._add_source(
+                        category="📊 研究报告",
+                        title=f"[{stock_name}] {title}",
+                        url=report.get('url'),
+                        source_name=report.get('source', 'Web Search')
+                    )
             
             # 风险
             if search_results.get('risk_events'):
@@ -215,6 +312,13 @@ class PreMarketAnalyst:
                 for risk in search_results['risk_events'][:1]:
                     title = risk.get('title', risk.get('content', ''))[:80]
                     deep_dive_output.append(f"    - {title}")
+                    # 追踪来源
+                    self._add_source(
+                        category="⚠️ 风险事件",
+                        title=f"[{stock_name}] {title}",
+                        url=risk.get('url'),
+                        source_name=risk.get('source', 'Web Search')
+                    )
         
         deep_dive_str = "\n".join(deep_dive_output) if deep_dive_output else "持仓深度分析暂无"
         
@@ -240,6 +344,13 @@ class PreMarketAnalyst:
                     title = item.get('title', item.get('content', ''))[:100]
                     confidence = item.get('confidence', 'MEDIUM')
                     policy_output.append(f"- [{confidence}] {title}")
+                    # 追踪来源
+                    self._add_source(
+                        category="📜 行业政策",
+                        title=f"[{industry}] {title}",
+                        url=item.get('url'),
+                        source_name=item.get('source', 'Web Search')
+                    )
                 policy_output.append("")
         
         return "\n".join(policy_output) if policy_output else "暂无相关行业政策新闻"
@@ -261,6 +372,9 @@ class PreMarketAnalyst:
         print(f"🔍 分析基金: {fund_name} ({fund_code})")
         print(f"{'='*60}")
         
+        # 重置来源追踪
+        self._reset_sources()
+        
         # Step 1: 全球宏观
         global_macro = self.collect_global_macro()
         
@@ -273,6 +387,8 @@ class PreMarketAnalyst:
         # Step 4: 行业政策
         policy_news = self.collect_policy_news(fund_focus)
         
+        print(" 收集到的行业政策信息：", policy_news)
+
         # Step 5: 构建Prompt并调用LLM
         print("  🤖 AI 综合研判中...")
         
@@ -286,12 +402,19 @@ class PreMarketAnalyst:
             sector_flow_data=sector_flow_data,
             holdings_data=holdings_data,
             holdings_deep_dive=holdings_deep_dive,
-            policy_news=policy_news
+            policy_news=policy_news,
+            report_date=self.today  # 传入实际日期
         )
         
         # 调用LLM生成报告
         report = self.llm.generate_content(prompt)
         
+        # 附加数据来源
+        sources_section = self._format_sources()
+        if sources_section:
+            report = report + sources_section
+        
+        print(f"  📚 收集到 {len(self.sources)} 个数据来源")
         print("  ✅ 分析完成")
         return report
 

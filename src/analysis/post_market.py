@@ -44,6 +44,7 @@ class PostMarketAnalyst:
         self.llm = get_llm_client()
         self.funds = self._load_funds()
         self.today = datetime.now().strftime("%Y-%m-%d")
+        self.sources = []  # 数据来源追踪
 
     def _load_funds(self) -> List[Dict]:
         if not os.path.exists(FUNDS_FILE):
@@ -51,6 +52,65 @@ class PostMarketAnalyst:
             return []
         with open(FUNDS_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
+
+    # =========================================================================
+    # Source Tracking Utilities
+    # =========================================================================
+    
+    def _reset_sources(self):
+        """每次分析新基金前重置来源列表"""
+        self.sources = []
+    
+    def _add_source(self, category: str, title: str, url: str = None, source_name: str = None):
+        """添加一个数据来源"""
+        source_entry = {
+            'category': category,
+            'title': title[:100] if title else 'N/A',
+            'url': url,
+            'source': source_name
+        }
+        # 避免重复
+        if not any(s['title'] == source_entry['title'] and s['url'] == source_entry['url'] for s in self.sources):
+            self.sources.append(source_entry)
+    
+    def _format_sources(self) -> str:
+        """格式化数据来源为报告附录"""
+        if not self.sources:
+            return ""
+        
+        output = []
+        output.append("\n\n---")
+        output.append("\n## 📚 数据来源 (Sources Used in This Report)")
+        
+        # 按类别分组
+        categories = {}
+        for source in self.sources:
+            cat = source['category']
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(source)
+        
+        # 格式化输出
+        for cat, items in categories.items():
+            output.append(f"\n### {cat}")
+            for i, item in enumerate(items, 1):
+                title = item['title']
+                url = item['url']
+                source_name = item.get('source', '')
+                
+                if url:
+                    output.append(f"{i}. [{title}]({url})")
+                else:
+                    source_suffix = f" - {source_name}" if source_name else ""
+                    output.append(f"{i}. {title}{source_suffix}")
+        
+        # 固定数据源说明
+        output.append("\n### 📊 市场数据来源")
+        output.append("- AkShare: A股指数、北向资金、行业资金流向、个股行情")
+        output.append("- 东方财富: 基金净值、持仓数据")
+        output.append("- Tavily Search API: 实时新闻搜索")
+        
+        return "\n".join(output)
 
     # =========================================================================
     # 数据收集模块
@@ -193,6 +253,13 @@ class PostMarketAnalyst:
             for news in fund_news:
                 title = news.get('title', news.get('content', ''))[:80]
                 output.append(f"- {title}")
+                # 追踪来源
+                self._add_source(
+                    category="📰 基金新闻",
+                    title=title,
+                    url=news.get('url'),
+                    source_name=news.get('source', 'Web Search')
+                )
         
         # 搜索重仓股新闻
         for holding in holdings_list[:3]:
@@ -202,6 +269,15 @@ class PostMarketAnalyst:
                 for news in stock_news:
                     title = news.get('title', news.get('content', ''))[:80]
                     output.append(f"- {title}")
+                    # 追踪来源
+                    self._add_source(
+                        category="📊 重仓股新闻",
+                        title=f"[{holding['name']}] {title}",
+                        url=news.get('url'),
+                        source_name=news.get('source', 'Web Search')
+                    )
+        
+        return "\n".join(output) if output else "暂无相关盘中新闻"
         
         return "\n".join(output) if output else "暂无相关盘中新闻"
 
@@ -236,6 +312,9 @@ class PostMarketAnalyst:
         print(f"📊 复盘基金: {fund_name} ({fund_code})")
         print(f"{'='*60}")
         
+        # 重置来源追踪
+        self._reset_sources()
+        
         # Step 1: 市场表现
         market_data = self.collect_market_performance()
         
@@ -265,12 +344,19 @@ class PostMarketAnalyst:
             holdings_performance=holdings_performance,
             sector_data=sector_data,
             capital_flow=capital_flow,
-            intraday_news=intraday_news
+            intraday_news=intraday_news,
+            report_date=self.today  # 传入实际日期
         )
         
         # 调用LLM生成报告
         report = self.llm.generate_content(prompt)
         
+        # 附加数据来源
+        sources_section = self._format_sources()
+        if sources_section:
+            report = report + sources_section
+        
+        print(f"  📚 收集到 {len(self.sources)} 个数据来源")
         print("  ✅ 复盘完成")
         return report
 
