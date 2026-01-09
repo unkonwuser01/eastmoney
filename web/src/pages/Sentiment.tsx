@@ -12,7 +12,8 @@ import {
   ListItemText,
   ListSubheader,
   Tooltip,
-  Chip
+  Chip,
+  IconButton
 } from '@mui/material';
 import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 import HistoryIcon from '@mui/icons-material/History';
@@ -20,10 +21,11 @@ import ArticleIcon from '@mui/icons-material/Article';
 import DownloadIcon from '@mui/icons-material/Download';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import html2canvas from 'html2canvas';
-import { runSentimentAnalysis, fetchSentimentReports, fetchReportContent } from '../api';
+import { runSentimentAnalysis, fetchSentimentReports, fetchReportContent, deleteSentimentReport } from '../api';
 import type { SentimentReportItem } from '../api';
 
 export default function SentimentPage() {
@@ -101,6 +103,23 @@ export default function SentimentPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDeleteReport = async (e: React.MouseEvent, filename: string) => {
+      e.stopPropagation();
+      if (window.confirm('Are you sure you want to delete this report?')) {
+          try {
+              await deleteSentimentReport(filename);
+              if (selectedFile === filename) {
+                  setSelectedFile(null);
+                  setReport(null);
+              }
+              await loadHistory();
+          } catch (error) {
+              console.error('Failed to delete report:', error);
+              setError('Failed to delete report.');
+          }
+      }
   };
 
   // Export report as image
@@ -209,7 +228,30 @@ export default function SentimentPage() {
                             // Extract time from date string if possible
                             const timeStr = new Date(item.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                             return (
-                                <ListItem key={item.filename} disablePadding>
+                                <ListItem 
+                                    key={item.filename} 
+                                    disablePadding
+                                    secondaryAction={
+                                        <IconButton 
+                                            edge="end" 
+                                            aria-label="delete"
+                                            size="small"
+                                            onClick={(e) => handleDeleteReport(e, item.filename)}
+                                            sx={{ 
+                                                color: '#94a3b8', 
+                                                opacity: 0, 
+                                                transition: 'opacity 0.2s',
+                                                '&:hover': { color: '#ef4444', bgcolor: 'rgba(239, 68, 68, 0.1)' }
+                                            }}
+                                            className="delete-btn"
+                                        >
+                                            <DeleteOutlineIcon fontSize="small" sx={{ fontSize: 16 }} />
+                                        </IconButton>
+                                    }
+                                    sx={{
+                                        '&:hover .delete-btn': { opacity: 1 }
+                                    }}
+                                >
                                     <ListItemButton 
                                         selected={selectedFile === item.filename}
                                         onClick={() => handleSelectReport(item.filename)}
@@ -224,7 +266,8 @@ export default function SentimentPage() {
                                                 color: '#2563eb',
                                                 '&:hover': { bgcolor: '#dbeafe' }
                                             },
-                                            '&:hover': { bgcolor: '#f8fafc' }
+                                            '&:hover': { bgcolor: '#f8fafc' },
+                                            pr: 5 // Space for delete button
                                         }}
                                     >
                                         <ListItemText 

@@ -311,6 +311,25 @@ async def list_commodity_reports():
             
     return reports
 
+@app.delete("/api/commodities/reports/{filename}")
+async def delete_commodity_report(filename: str):
+    try:
+        # Security check
+        if not filename.endswith(".md") or ".." in filename or "/" in filename or "\\" in filename:
+             raise HTTPException(status_code=400, detail="Invalid filename")
+             
+        commodities_dir = os.path.join(REPORT_DIR, "commodities")
+        file_path = os.path.join(commodities_dir, filename)
+        
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return {"status": "success", "message": f"Deleted {filename}"}
+        else:
+            raise HTTPException(status_code=404, detail="File not found")
+    except Exception as e:
+        print(f"Error deleting commodity report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/market-funds")
 async def search_market_funds(query: str = ""):
     funds = []
@@ -602,6 +621,25 @@ async def list_sentiment_reports():
             continue
             
     return reports
+
+@app.delete("/api/sentiment/reports/{filename}")
+async def delete_sentiment_report(filename: str):
+    try:
+        # Security check: only allow .md files in sentiment dir, no path traversal
+        if not filename.endswith(".md") or ".." in filename or "/" in filename or "\\" in filename:
+             raise HTTPException(status_code=400, detail="Invalid filename")
+             
+        sentiment_dir = os.path.join(REPORT_DIR, "sentiment")
+        file_path = os.path.join(sentiment_dir, filename)
+        
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return {"status": "success", "message": f"Deleted {filename}"}
+        else:
+            raise HTTPException(status_code=404, detail="File not found")
+    except Exception as e:
+        print(f"Error deleting report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/market/funds/{code}/details")

@@ -21,6 +21,10 @@ export const fetchCommodityReports = async (): Promise<ReportSummary[]> => {
   return response.data;
 };
 
+export const deleteCommodityReport = async (filename: string): Promise<void> => {
+  await axios.delete(`${API_BASE}/commodities/reports/${filename}`);
+};
+
 export const generateCommodityReport = async (asset: 'gold' | 'silver'): Promise<void> => {
   await axios.post(`${API_BASE}/commodities/analyze`, { asset });
 };
@@ -143,4 +147,8 @@ export interface SentimentReportItem {
 export const fetchSentimentReports = async (): Promise<SentimentReportItem[]> => {
   const response = await axios.get(`${API_BASE}/sentiment/reports`);
   return response.data;
+};
+
+export const deleteSentimentReport = async (filename: string): Promise<void> => {
+  await axios.delete(`${API_BASE}/sentiment/reports/${filename}`);
 };

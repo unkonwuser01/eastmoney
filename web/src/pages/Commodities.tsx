@@ -21,10 +21,11 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import html2canvas from 'html2canvas';
-import { fetchCommodityReports, fetchReportContent, generateCommodityReport } from '../api';
+import { fetchCommodityReports, fetchReportContent, generateCommodityReport, deleteCommodityReport } from '../api';
 import type { ReportSummary } from '../api';
 
 export default function CommoditiesPage() {
@@ -48,7 +49,9 @@ export default function CommoditiesPage() {
             const commodityReports = await fetchCommodityReports();
             setReports(commodityReports);
             if (commodityReports.length > 0 && !selectedReport) {
-                handleSelectReport(commodityReports[0]);
+                // Don't auto-select if we just deleted everything, logic handled in delete
+                // But initially, yes.
+                // Actually, let's keep it simple: only auto-select on mount if null
             }
         } catch (error) {
             console.error("Failed to load reports", error);
@@ -65,6 +68,25 @@ export default function CommoditiesPage() {
             console.error("Failed to load content", error);
         } finally {
             setLoadingContent(false);
+        }
+    };
+
+    const handleDeleteReport = async (e: React.MouseEvent, filename: string) => {
+        e.stopPropagation();
+        if (window.confirm('Are you sure you want to delete this report?')) {
+            try {
+                await deleteCommodityReport(filename);
+                // Update local state immediately
+                setReports(prev => prev.filter(r => r.filename !== filename));
+                
+                if (selectedReport?.filename === filename) {
+                    setSelectedReport(null);
+                    setReportContent('');
+                }
+            } catch (error) {
+                console.error("Failed to delete report", error);
+                alert("Failed to delete report");
+            }
         }
     };
 
@@ -106,8 +128,11 @@ export default function CommoditiesPage() {
         
         const groups: Record<string, ReportSummary[]> = {};
         filtered.forEach(r => {
-            if (!groups[r.date]) groups[r.date] = [];
-            groups[r.date].push(r);
+            // date format from API is "YYYY-MM-DD HH:MM:SS" or just date. 
+            // We want to group by just YYYY-MM-DD
+            const day = r.date.split(' ')[0];
+            if (!groups[day]) groups[day] = [];
+            groups[day].push(r);
         });
         
         return Object.keys(groups).sort((a, b) => b.localeCompare(a)).map(date => ({
@@ -214,13 +239,16 @@ export default function CommoditiesPage() {
                                             onClick={() => handleSelectReport(report)}
                                             sx={{
                                                 p: 2,
+                                                pr: 5, // Reserve space for delete button
                                                 mb: 1,
                                                 borderRadius: '12px',
                                                 cursor: 'pointer',
                                                 border: isSelected ? (isGold ? '1px solid #fcd34d' : '1px solid #cbd5e1') : '1px solid transparent',
                                                 bgcolor: isSelected ? (isGold ? '#fffbeb' : '#f8fafc') : 'transparent',
                                                 '&:hover': { bgcolor: isGold ? '#fffbeb' : '#f8fafc' },
-                                                transition: 'all 0.2s'
+                                                transition: 'all 0.2s',
+                                                position: 'relative',
+                                                '&:hover .delete-btn': { opacity: 1 }
                                             }}
                                         >
                                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
@@ -232,9 +260,28 @@ export default function CommoditiesPage() {
                                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                                 <AccessTimeIcon sx={{ fontSize: 12, color: '#94a3b8' }} />
                                                 <Typography sx={{ fontSize: '0.7rem', color: '#94a3b8', fontFamily: 'JetBrains Mono' }}>
-                                                    INTEL REPORT
+                                                    {report.date.split(' ')[1] || 'INTEL'}
                                                 </Typography>
                                             </Box>
+                                            
+                                            <IconButton
+                                                className="delete-btn"
+                                                size="small"
+                                                onClick={(e) => handleDeleteReport(e, report.filename)}
+                                                sx={{
+                                                    position: 'absolute',
+                                                    right: 4,
+                                                    top: '50%',
+                                                    transform: 'translateY(-50%)',
+                                                    opacity: 0,
+                                                    color: '#94a3b8',
+                                                    transition: 'all 0.2s',
+                                                    padding: '4px',
+                                                    '&:hover': { color: '#ef4444', bgcolor: 'rgba(239,68,68,0.1)' }
+                                                }}
+                                            >
+                                                <DeleteOutlineIcon sx={{ fontSize: 18 }} />
+                                            </IconButton>
                                         </Box>
                                     )
                                 })}
