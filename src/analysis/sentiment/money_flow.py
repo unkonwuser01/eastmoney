@@ -45,56 +45,63 @@ class MoneyFlowAnalyst:
             # 获取今日行业资金流排名
             df_flow = ak.stock_sector_fund_flow_rank(indicator="今日", sector_type="行业资金流")
             if df_flow is not None and not df_flow.empty:
-                # 东方财富接口返回列名可能包含：名称, 今日涨跌幅, 今日主力净流入, 占比...
-                # 需要标准化处理
-                # 假设列名：['名称', '今日涨跌幅', '今日主力净流入', '今日主力净流入占比', ...]
+                # 东方财富接口返回列名可能包含：名称, 今日涨跌幅, 今日主力净流入-净额, ...
                 
-                # 转换净流入为数值 (单位通常是元，转换为亿元)
-                flow_col = '今日主力净流入'
+                # 动态查找列名
+                flow_col = '今日主力净流入' # Default
+                pct_col = '今日涨跌幅' # Default
                 name_col = '名称'
-                pct_col = '今日涨跌幅'
+
+                for col in df_flow.columns:
+                    if "主力净流入" in col and "净额" in col:
+                        flow_col = col
+                    elif "涨跌幅" in col and "今日" in col:
+                        pct_col = col
                 
                 if flow_col in df_flow.columns:
-                    # 转换单位：原始数据带有"万"或"亿"字样，akshare通常处理好了，或者是纯数字
-                    # Akshare stock_sector_fund_flow_rank returns numeric but with mixed units sometimes strings
-                    # Let's assume standardized numeric or handle string conversion
-                    
+                    # 转换净流入为数值 (单位通常是元，转换为亿元)
                     def parse_flow(val):
-                        if isinstance(val, (int, float)):
-                            return float(val) / 1e8 # 假设原始单位是元
-                        if isinstance(val, str):
-                            val = val.replace('亿', '').replace('万', '')
-                            # 简单处理，实际应更严谨
-                            return float(val)
+                        try:
+                            if pd.isna(val): return 0.0
+                            if isinstance(val, (int, float)):
+                                return float(val) / 1e8 # 原始单位是元
+                            if isinstance(val, str):
+                                val = val.replace('亿', '').replace('万', '')
+                                return float(val)
+                        except:
+                            return 0.0
                         return 0.0
 
-                    # 排序
-                    # 注意：AkShare返回的数据已经是排序过的，或者是DataFrame
-                    # 直接取前5和后5
-                    
                     # Inflow Top 5
-                    top_in = df_flow.head(5).copy()
+                    # Ensure numeric
+                    if df_flow[flow_col].dtype == object:
+                         # Try to clean if it's string (though recent akshare returns float)
+                         pass
+
+                    # Sort just in case API didn't sort by flow
+                    df_flow[flow_col] = pd.to_numeric(df_flow[flow_col], errors='coerce').fillna(0)
+                    
+                    df_sorted = df_flow.sort_values(by=flow_col, ascending=False)
+                    
+                    # Top 5 Inflow
+                    top_in = df_sorted.head(5)
                     inflow_list = []
                     for _, row in top_in.iterrows():
-                        raw_val = row.get(flow_col)
-                        # Akshare rank data usually is raw unit '10000' or similar? 
-                        # Actually stock_sector_fund_flow_rank usually returns string with unit or big number
-                        # Let's simple format string
                         inflow_list.append({
                             "name": row.get(name_col),
                             "pct": row.get(pct_col),
-                            "net_in": row.get(flow_col) # Keep original for now, LLM can interpret
+                            "net_in": parse_flow(row.get(flow_col))
                         })
                     data["sector_inflow"] = inflow_list
 
-                    # Outflow Top 5 (Bottom of list)
-                    top_out = df_flow.tail(5).sort_values(by=flow_col, ascending=True).copy()
+                    # Top 5 Outflow (Bottom 5 of sorted)
+                    top_out = df_sorted.tail(5).sort_values(by=flow_col, ascending=True)
                     outflow_list = []
                     for _, row in top_out.iterrows():
                         outflow_list.append({
                             "name": row.get(name_col),
                             "pct": row.get(pct_col),
-                            "net_out": row.get(flow_col)
+                            "net_out": parse_flow(row.get(flow_col))
                         })
                     data["sector_outflow"] = outflow_list
                     

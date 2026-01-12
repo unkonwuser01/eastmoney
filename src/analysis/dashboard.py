@@ -45,51 +45,27 @@ class DashboardService:
         }
 
         try:
-            # 1. Indices (Shanghai, Shenzhen, ChiNext, HSI, Nasdaq)
-            # stock_zh_index_spot_em is the correct function
-            indices_df = ak.stock_zh_index_spot_em()
-            # Note: stock_zh_index_spot_em mainly returns A-share indices.
-            # To get HSI and Nasdaq, we might need index_global_spot_em() OR accept they might be missing here.
-            # However, api_server.py's get_market_indices uses index_global_spot_em().
-            # Let's try to stick to consistent sources. 
-            # If stock_zh_index_spot_em lacks them, we should use index_global_spot_em instead for this section too.
-            
-            # Let's switch to index_global_spot_em for a unified view if possible, or fetch separately.
-            # Actually, let's just fetch global indices here to ensure coverage.
+            # 1. Indices (Global Spot - Faster)
+            # Replaces stock_zh_index_spot_em which fetches ALL indices (slow)
             try:
                 global_df = ak.index_global_spot_em()
-            except:
+            except Exception as e:
+                print(f"Global indices error: {e}")
                 global_df = pd.DataFrame()
 
-            targets = ["上证指数", "恒生指数", "纳斯达克"]
-            # Helper to find in DF
-            def find_idx(df, name):
-                if df.empty: return None
-                row = df[df['名称'] == name]
-                if not row.empty:
-                    r = row.iloc[0]
-                    # Normalize columns. global_spot has '最新价', '涨跌幅', '涨跌额'
-                    # zh_spot has same.
-                    return {
-                        "name": name,
-                        "price": r['最新价'],
-                        "change": r['涨跌幅']
-                    }
-                return None
-
-            # Try global first (it has HSI/Nasdaq), then fall back or merge
-            # Actually global usually has SH/SZ too.
-            source_df = global_df if not global_df.empty else indices_df
+            targets = ["上证指数", "深证成指", "纳斯达克"]
             
-            if not source_df.empty:
+            if not global_df.empty:
                 for name in targets:
-                    item = find_idx(source_df, name)
-                    # If not found in global (e.g. ChiNext might be missing in global top list), try zh list
-                    if not item and not indices_df.empty and source_df is not indices_df:
-                        item = find_idx(indices_df, name)
-                    
-                    if item:
-                        data["indices"].append(item)
+                    # Find by Name
+                    row = global_df[global_df['名称'] == name]
+                    if not row.empty:
+                        r = row.iloc[0]
+                        data["indices"].append({
+                            "name": name,
+                            "price": float(r['最新价']),
+                            "change": float(r['涨跌幅'])
+                        })
             
             # 2. Turnover & Breadth
             # Breadth via Legu (Fast)
@@ -108,27 +84,24 @@ class DashboardService:
             except Exception as e:
                 print(f"Legu fetch failed: {e}")
 
-            # Turnover via Indices (SH Composite + SZ Component/Composite)
-            # We already fetched indices_df in step 1
-            if not indices_df.empty:
-                # Sum turnover of SH Composite (上证指数) + SZ Component (深证成指)
-                # Note: SZ Component is subset, SZ Composite (深证综指) is better but maybe not in main list?
-                # Let's try to find "深证综指" first, else "深证成指"
-                
-                sh_row = indices_df[indices_df['名称'] == "上证指数"]
-                sz_row = indices_df[indices_df['名称'] == "深证综指"]
-                if sz_row.empty:
-                    sz_row = indices_df[indices_df['名称'] == "深证成指"]
+            # Turnover via Specific Daily Indices (SH Composite + SZ Composite)
+            # Much faster than fetching all spot indices
+            try:
+                # sh000001 = SH Composite, sz399106 = SZ Composite
+                sh_df = ak.stock_zh_index_daily_em(symbol="sh000001")
+                sz_df = ak.stock_zh_index_daily_em(symbol="sz399106")
                 
                 total_to = 0
-                if not sh_row.empty:
-                    total_to += float(sh_row.iloc[0]['成交额'])
-                if not sz_row.empty:
-                    total_to += float(sz_row.iloc[0]['成交额'])
+                if not sh_df.empty:
+                    total_to += float(sh_df.iloc[-1]['amount'])
+                if not sz_df.empty:
+                    total_to += float(sz_df.iloc[-1]['amount'])
                 
                 if total_to > 0:
                      # Convert to Billions (Yi)
                     data["turnover"]["total"] = round(total_to / 100000000, 2)
+            except Exception as e:
+                print(f"Turnover fetch failed: {e}")
                 
             # 3. Main Capital Flow
             # stock_individual_fund_flow_rank gives individual flows, sum top?
