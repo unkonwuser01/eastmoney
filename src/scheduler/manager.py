@@ -45,12 +45,11 @@ class SchedulerManager:
         if not self.scheduler.get_job(job_id):
             self.scheduler.add_job(
                 self.refresh_dashboard_cache,
-                trigger=IntervalTrigger(minutes=3),
+                trigger=IntervalTrigger(minutes=5),
                 id=job_id,
                 replace_existing=True
             )
-            print("Scheduled dashboard cache refresh every 3 minutes")
-
+            print("Scheduled dashboard cache refresh every 5 minutes")
     def refresh_dashboard_cache(self):
         """Worker to refresh global dashboard cache"""
         try:

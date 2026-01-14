@@ -580,7 +580,7 @@ export default function StocksPage() {
              </Box>
              <Box sx={{ textAlign: 'right' }}>
                  <Typography variant="h4" sx={{ 
-                     color: '#0f172a', fontWeight: 900, fontFamily: 'JetBrains Mono',
+                     fontWeight: 900, fontFamily: 'JetBrains Mono',
                      color: (stockDetails?.quote?.涨跌幅 > 0) ? '#ef4444' : (stockDetails?.quote?.涨跌幅 < 0) ? '#22c55e' : '#0f172a'
                  }}>
                     {stockDetails?.quote?.最新价 || '---'}
