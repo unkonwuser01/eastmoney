@@ -139,8 +139,6 @@ OPENAI_API_KEY=your_openai_api_key
 # 网络搜索 (情绪分析需要)
 TAVILY_API_KEY=your_tavily_api_key
 
-# JWT 密钥
-SECRET_KEY=your_secret_key_here
 ```
 
 ### 5. 启动服务
@@ -200,7 +198,7 @@ npm run dev
 在系统设置页面可以切换 AI 模型：
 
 - **Gemini** (推荐) - Google 的 Gemini Pro 模型
-- **OpenAI** - GPT-4 系列模型
+- **OpenAI** - GPT-5.0 系列模型
 
 ### 定时任务
 
@@ -234,32 +232,59 @@ cd web && npm run build
 
 ## 部署
 
-### Docker 部署
+### 后端 Docker 部署
 
 ```bash
-# 构建镜像
-docker build -t vibe-alpha .
-
-# 运行容器
-docker run -d -p 8000:8000 -p 5173:80 vibe-alpha
+# 构建镜像 根目录执行
+./run_docker.sh
 ```
 
-### 生产环境
+### 前端Nginx 部署
 
-建议使用 Nginx 反向代理：
+建议使用 Nginx 反向代理部署前端：
 
 ```nginx
 server {
     listen 80;
-    server_name your-domain.com;
+    listen [::]:80;
+    server_name xxxxx.cn;  #替换成你的域名
 
+    # React应用的根目录
+    root /upload/valpha/frontend/dist;   #配置成你打包上传的npm 包路径
+    index index.html;
+
+    # 访问日志和错误日志
+    access_log /var/log/nginx/valpha_access.log;
+    error_log /var/log/nginx/valpha_error.log;
+
+    # Gzip压缩配置（提高加载速度）
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml+rss application/json application/javascript;
+
+    # 处理React Router（重要！）
     location / {
-        root /path/to/web/dist;
         try_files $uri $uri/ /index.html;
     }
 
-    location /api {
-        proxy_pass http://127.0.0.1:8000;
+    location /api/ {
+           proxy_pass http://127.0.0.1:9000/api/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+           }
+    # 静态资源缓存
+    location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+
+    # 禁止访问隐藏文件
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
     }
 }
 ```
