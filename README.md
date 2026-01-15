@@ -166,7 +166,12 @@ npm run dev
 
 | 股票监控 | 情报报告 |
 |----------|----------|
-| ![Stocks](docs/screenshots/stocks.png) | ![Reports](docs/screenshots/reports.png) |
+| ![Stocks](docs/screenshots/sentiments.png) | ![Reports](docs/screenshots/reports.png) | 
+
+
+| 情绪分析报告 |
+|----------|
+![Reports](docs/screenshots/sentiment_output.png)
 
 ---
 
