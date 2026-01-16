@@ -302,18 +302,22 @@ def get_industry_capital_flow(industry: str = None) -> Dict:
 
 def get_stock_announcement(stock_code: str, stock_name: str) -> List[Dict]:
     """
-    获取个股最新公告（东方财富）
+    获取个股最新公告（巨潮资讯）
     """
     announcements = []
     try:
-        # 尝试获取公告
-        df = ak.stock_notice_report(symbol=stock_code)
-        if not df.empty:
-            # 最近7天的公告
+        # 尝试获取公告 - 使用巨潮资讯接口，支持更多市场（包括北交所）
+        df = ak.stock_zh_a_disclosure_report_cninfo(symbol=stock_code)
+        if df is not None and not df.empty:
+            # 按时间倒序排序 (API通常已排序，但也可能未排序)
+            if '公告时间' in df.columns:
+                 df.sort_values(by='公告时间', ascending=False, inplace=True)
+            
+            # 最近5条公告
             recent = df.head(5)
             announcements = recent.to_dict('records')
     except Exception as e:
-        print(f"Error fetching announcements for {stock_name}: {e}")
+        print(f"Error fetching announcements for {stock_name} ({stock_code}): {e}")
     return announcements
 
 def get_stock_realtime_quote(

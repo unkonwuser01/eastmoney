@@ -5,11 +5,11 @@ from apscheduler.triggers.interval import IntervalTrigger
 import logging
 import asyncio
 from typing import Dict, Optional
-from src.storage.db import get_active_funds, get_fund_by_code
+from src.storage.db import get_active_funds, get_fund_by_code, get_active_stocks, get_stock_by_code
 from src.analysis.pre_market import PreMarketAnalyst
 from src.analysis.post_market import PostMarketAnalyst
 from src.analysis.dashboard import DashboardService
-from src.report_gen import save_report
+from src.report_gen import save_report, save_stock_report
 
 logger = logging.getLogger(__name__)
 
@@ -33,21 +33,27 @@ class SchedulerManager:
         """Clear all and reload from DB (All users)"""
         self.scheduler.remove_all_jobs()
         # Fetch ALL active funds from ALL users
-        funds = get_active_funds(user_id=None) 
+        funds = get_active_funds(user_id=None)
         for fund in funds:
             self.add_fund_jobs(fund)
+        # Fetch ALL active stocks from ALL users
+        stocks = get_active_stocks(user_id=None)
+        for stock in stocks:
+            self.add_stock_jobs(stock)
         # Re-add dashboard job since we removed all
         self.add_dashboard_refresh_job()
 
     def add_dashboard_refresh_job(self):
-        """Schedule dashboard cache refresh every 3 minutes"""
+        """Schedule dashboard cache refresh every 5 minutes"""
         job_id = "dashboard_refresh"
         if not self.scheduler.get_job(job_id):
             self.scheduler.add_job(
                 self.refresh_dashboard_cache,
                 trigger=IntervalTrigger(minutes=5),
                 id=job_id,
-                replace_existing=True
+                replace_existing=True,
+                max_instances=3,
+                coalesce=True
             )
             print("Scheduled dashboard cache refresh every 5 minutes")
     def refresh_dashboard_cache(self):
@@ -139,6 +145,85 @@ class SchedulerManager:
                 
         except Exception as e:
             logger.error(f"Task failed for {fund_code}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def add_stock_jobs(self, stock: Dict):
+        """Add Pre/Post market jobs for a single stock"""
+        code = stock['code']
+        user_id = stock.get('user_id')
+
+        # Pre-market
+        if stock.get('pre_market_time'):
+            try:
+                hour, minute = stock['pre_market_time'].split(':')
+                job_id = f"stock_pre_{code}_{user_id}"
+                self.scheduler.add_job(
+                    self.run_stock_analysis_task,
+                    trigger=CronTrigger(hour=hour, minute=minute),
+                    id=job_id,
+                    args=[code, 'pre', user_id],
+                    replace_existing=True
+                )
+                print(f"Scheduled STOCK PRE-market for {code} (User {user_id}) at {hour}:{minute}")
+            except Exception as e:
+                print(f"Error scheduling STOCK PRE task for {code}: {e}")
+
+        # Post-market
+        if stock.get('post_market_time'):
+            try:
+                hour, minute = stock['post_market_time'].split(':')
+                job_id = f"stock_post_{code}_{user_id}"
+                self.scheduler.add_job(
+                    self.run_stock_analysis_task,
+                    trigger=CronTrigger(hour=hour, minute=minute),
+                    id=job_id,
+                    args=[code, 'post', user_id],
+                    replace_existing=True
+                )
+                print(f"Scheduled STOCK POST-market for {code} (User {user_id}) at {hour}:{minute}")
+            except Exception as e:
+                print(f"Error scheduling STOCK POST task for {code}: {e}")
+
+    def remove_stock_jobs(self, code: str):
+        """Remove jobs for a stock."""
+        for job in self.scheduler.get_jobs():
+            if job.id.startswith(f"stock_pre_{code}_") or job.id.startswith(f"stock_post_{code}_"):
+                self.scheduler.remove_job(job.id)
+                print(f"Removed stock job {job.id}")
+
+    def run_stock_analysis_task(self, stock_code: str, mode: str, user_id: Optional[int] = None):
+        """Worker function for stock analysis"""
+        print(f"Executing STOCK {mode.upper()}-market task for {stock_code} (User: {user_id})...")
+
+        stock = get_stock_by_code(stock_code, user_id=user_id)
+
+        if not stock or not stock.get('is_active'):
+            print(f"Stock {stock_code} is inactive or deleted. Skipping.")
+            return
+
+        report = ""
+        try:
+            # Build stock_info dict for strategy
+            stock_info = {
+                "type": "stock",
+                "code": stock['code'],
+                "name": stock['name'],
+                "sector": stock.get('sector', ''),
+            }
+
+            if mode == 'pre':
+                analyst = PreMarketAnalyst()
+                report = analyst.analyze_item(stock_info)
+            elif mode == 'post':
+                analyst = PostMarketAnalyst()
+                report = analyst.analyze_item(stock_info)
+
+            if report:
+                save_stock_report(report, mode, stock['name'], stock['code'], user_id=user_id)
+
+        except Exception as e:
+            logger.error(f"Stock task failed for {stock_code}: {e}")
             import traceback
             traceback.print_exc()
 

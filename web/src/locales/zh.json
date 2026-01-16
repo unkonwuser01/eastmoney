@@ -163,7 +163,13 @@
     },
     "menu": {
       "view_details": "查看详情",
-      "edit_config": "编辑配置"
+      "edit_config": "编辑配置",
+      "pre_market_analysis": "盘前分析",
+      "post_market_analysis": "盘后分析"
+    },
+    "analysis": {
+      "pre_market": "盘前",
+      "post_market": "盘后"
     },
     "dialog": {
       "edit_title": "编辑股票",
@@ -199,7 +205,10 @@
       "save_error": "保存股票失败",
       "delete_confirm": "确定要删除这只股票吗？",
       "delete_success": "股票已删除",
-      "delete_error": "删除股票错误"
+      "delete_error": "删除股票错误",
+      "analysis_started": "正在为 {{name}} 生成{{mode}}分析报告，请稍候...",
+      "analysis_success": "{{name}} 分析报告生成完成",
+      "analysis_error": "分析失败，请重试"
     }
   },
   "sentiment": {
@@ -230,6 +239,9 @@
     "processing": "处理中...",
     "market_intelligence": "市场情报",
     "fund_analysis": "基金分析",
+    "stock_analysis": "股票分析",
+    "fund": "基金",
+    "stock": "股票",
     "daily_overview": "每日市场概览",
     "footer_text": "由 VibeAlpha 生成",
     "select_prompt": "选择一份报告以查看分析",

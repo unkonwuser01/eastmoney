@@ -32,25 +32,29 @@ class PostMarketAnalyst(BaseAnalyst):
         print(f"\n{'='*60}")
         print(f"📊 复盘基金: {fund_name} ({fund.get('code')})")
         print(f"{'='*60}")
-        
+
         try:
             # 1. Get Strategy
             strategy = StrategyFactory.get_strategy(fund, self.llm, self.web_search)
-            
+
             # 2. Collect Data
             data = strategy.collect_data(mode='post')
-            
+
             # 3. Generate Report
             report = strategy.generate_report(mode='post', data=data)
-            
+
             print("  ✅ 复盘完成")
             return report
-            
+
         except Exception as e:
             print(f"  ❌ Analysis Failed: {e}")
             import traceback
             traceback.print_exc()
             return f"Analysis Failed: {str(e)}"
+
+    def analyze_item(self, item: dict) -> str:
+        """Generic method for analyzing any item (fund or stock)."""
+        return self.analyze_fund(item)
 
 if __name__ == "__main__":
     analyst = PostMarketAnalyst()

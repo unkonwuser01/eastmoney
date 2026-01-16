@@ -1,9 +1,9 @@
 from tavily import TavilyClient
 import os
 import sys
+import threading
 from typing import List, Dict, Optional
 from datetime import datetime
-from itertools import cycle
 
 # Add project root to sys.path to import config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -18,18 +18,13 @@ class WebSearch:
     Layer 4: 一般新闻/舆情
     """
     
+    # Class-level shared state
+    _clients: List[TavilyClient] = []
+    _lock = threading.Lock()
+    _initialized = False
+
     def __init__(self):
-        if not TAVILY_API_KEY:
-            raise ValueError("TAVILY_API_KEY is not set in environment variables.")
-        
-        # Support multiple keys separated by comma
-        keys = [k.strip() for k in TAVILY_API_KEY.split(',') if k.strip()]
-        if not keys:
-            raise ValueError("No valid TAVILY_API_KEY found.")
-            
-        self.clients = [TavilyClient(api_key=key) for key in keys]
-        self.client_cycle = cycle(self.clients)
-        print(f"WebSearch initialized with {len(keys)} Tavily keys.")
+        self._ensure_initialized()
         
         # 高质量财经信源域名
         self.quality_domains = [
@@ -45,17 +40,78 @@ class WebSearch:
             "finance.sina.com.cn" # 新浪财经
         ]
 
-    def _get_client(self):
-        """Get the next client in the rotation"""
-        return next(self.client_cycle)
+    @classmethod
+    def _ensure_initialized(cls):
+        with cls._lock:
+            if cls._initialized:
+                return
+
+            if not TAVILY_API_KEY:
+                raise ValueError("TAVILY_API_KEY is not set in environment variables.")
+            
+            # Support multiple keys separated by comma
+            keys = [k.strip() for k in TAVILY_API_KEY.split(',') if k.strip()]
+            if not keys:
+                raise ValueError("No valid TAVILY_API_KEY found.")
+                
+            cls._clients = [TavilyClient(api_key=key) for key in keys]
+            print(f"WebSearch initialized with {len(keys)} Tavily keys (Shared Pool).")
+            cls._initialized = True
+
+    def _safe_search(self, search_func) -> Dict:
+        """
+        Executes a search function with key rotation and invalidation logic.
+        Uses a shared pool of clients protected by a lock.
+        """
+        # We try as many times as there are clients currently available
+        # But since the list can change, we just loop until success or exhaustion
+        while True:
+            client = None
+            
+            # 1. Get a client safely
+            with self._lock:
+                if not self._clients:
+                    print("CRITICAL: All Tavily API keys are exhausted.")
+                    return {}
+                client = self._clients[0]
+            
+            try:
+                # 2. Execute search (Release lock during IO)
+                response = search_func(client)
+                
+                # 3. Success: Rotate client (Load Balancing)
+                with self._lock:
+                    # Only rotate if the client is still at the front (hasn't been removed/rotated by another thread)
+                    if self._clients and self._clients[0] == client:
+                        self._clients.append(self._clients.pop(0))
+                
+                return response
+
+            except Exception as e:
+                error_str = str(e).lower()
+                is_usage_error = "usage limit" in error_str or "upgrade your plan" in error_str or "429" in error_str
+                
+                if is_usage_error:
+                    print(f"WARNING: Tavily API key exhausted/limited. Removing invalid key. Error: {e}")
+                    with self._lock:
+                        # Remove this specific client instance if it's still in the pool
+                        if client in self._clients:
+                            self._clients.remove(client)
+                            print(f"Key removed. Remaining keys: {len(self._clients)}")
+                    # Continue loop to try next key
+                else:
+                    # For other errors, log and return empty (don't retry endlessly on bad queries)
+                    print(f"Error searching Tavily: {e}")
+                    return {}
+        
+        return {}
 
     def search_news(self, query: str, max_results: int = 5) -> List[Dict]:
         """
         Search for news articles related to the query.
         """
-        try:
-            client = self._get_client()
-            response = client.search(
+        def _do_search(client):
+            return client.search(
                 query=query,
                 search_depth="advanced",
                 topic="news",
@@ -64,26 +120,23 @@ class WebSearch:
                 include_raw_content=False,
                 include_images=False,
             )
-            return response.get("results", [])
-        except Exception as e:
-            print(f"Error searching Tavily: {e}")
-            return []
+
+        response = self._safe_search(_do_search)
+        return response.get("results", [])
 
     def search_general(self, query: str, max_results: int = 5) -> List[Dict]:
         """
         General web search (not restricted to news).
         """
-        try:
-            client = self._get_client()
-            response = client.search(
+        def _do_search(client):
+            return client.search(
                 query=query,
                 search_depth="advanced",
                 max_results=max_results
             )
-            return response.get("results", [])
-        except Exception as e:
-            print(f"Error searching Tavily (General): {e}")
-            return []
+
+        response = self._safe_search(_do_search)
+        return response.get("results", [])
 
     # =========================================================================
     # 专业分层搜索方法

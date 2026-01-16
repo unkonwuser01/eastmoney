@@ -158,8 +158,6 @@ npm run dev
 
 ## 功能截图
 
-> 截图待添加
-
 | 仪表盘 | 基金分析 |
 |--------|----------|
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Funds](docs/screenshots/funds.png) |

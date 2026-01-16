@@ -32,25 +32,29 @@ class PreMarketAnalyst(BaseAnalyst):
         print(f"\n{'='*60}")
         print(f"🔍 分析基金: {fund_name} ({fund.get('code')})")
         print(f"{'='*60}")
-        
+
         try:
             # 1. Get Strategy
             strategy = StrategyFactory.get_strategy(fund, self.llm, self.web_search)
-            
+
             # 2. Collect Data
             data = strategy.collect_data(mode='pre')
-            
+
             # 3. Generate Report
             report = strategy.generate_report(mode='pre', data=data)
-            
+
             print("  ✅ 分析完成")
             return report
-            
+
         except Exception as e:
             print(f"  ❌ Analysis Failed: {e}")
             import traceback
             traceback.print_exc()
             return f"Analysis Failed: {str(e)}"
+
+    def analyze_item(self, item: dict) -> str:
+        """Generic method for analyzing any item (fund or stock)."""
+        return self.analyze_fund(item)
 
 if __name__ == "__main__":
     analyst = PreMarketAnalyst()

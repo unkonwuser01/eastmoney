@@ -29,15 +29,33 @@ import SearchIcon from '@mui/icons-material/Search';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import ShowChartIcon from '@mui/icons-material/ShowChart';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { fetchReports, fetchReportContent, deleteReport } from '../api';
-import type { ReportSummary } from '../api'
+import {
+    fetchReports,
+    fetchReportContent,
+    deleteReport,
+    fetchStockReports,
+    fetchStockReportContent,
+    deleteStockReport
+} from '../api';
+
+// Unified report type for both fund and stock reports
+interface UnifiedReport {
+    filename: string;
+    date: string;
+    mode: 'pre' | 'post' | 'commodities';
+    type: 'fund' | 'stock';
+    code: string;
+    name: string;
+    is_summary: boolean;
+}
 
 export default function ReportsPage() {
     const { t } = useTranslation();
-    const [reports, setReports] = useState<ReportSummary[]>([]);
-    const [selectedReport, setSelectedReport] = useState<ReportSummary | null>(null);
+    const [reports, setReports] = useState<UnifiedReport[]>([]);
+    const [selectedReport, setSelectedReport] = useState<UnifiedReport | null>(null);
     const [reportContent, setReportContent] = useState<string>('');
     const [loadingContent, setLoadingContent] = useState<boolean>(false);
     const [exporting, setExporting] = useState<boolean>(false);
@@ -58,16 +76,47 @@ export default function ReportsPage() {
 
     const loadReports = async () => {
         try {
-            const data = await fetchReports();
-            setReports(data);
+            // Fetch both fund and stock reports in parallel
+            const [fundData, stockData] = await Promise.all([
+                fetchReports(),
+                fetchStockReports()
+            ]);
+
+            // Convert fund reports to unified format
+            const unifiedFundReports: UnifiedReport[] = fundData.map(r => ({
+                filename: r.filename,
+                date: r.date,
+                mode: r.mode,
+                type: 'fund' as const,
+                code: r.fund_code || '',
+                name: r.fund_name || '',
+                is_summary: r.is_summary
+            }));
+
+            // Convert stock reports to unified format
+            const unifiedStockReports: UnifiedReport[] = stockData.map(r => ({
+                filename: r.filename,
+                date: r.date,
+                mode: r.mode,
+                type: 'stock' as const,
+                code: r.stock_code,
+                name: r.stock_name,
+                is_summary: false
+            }));
+
+            // Merge and sort by date (newest first)
+            const allReports = [...unifiedFundReports, ...unifiedStockReports]
+                .sort((a, b) => b.date.localeCompare(a.date));
+
+            setReports(allReports);
 
             // Auto-expand the first date if not already expanded (optional, user might want to keep state)
-            if (data.length > 0 && expandedDates.size === 0) {
-                const newestDate = data[0].date;
+            if (allReports.length > 0 && expandedDates.size === 0) {
+                const newestDate = allReports[0].date;
                 setExpandedDates(new Set([newestDate]));
 
                 if (!selectedReport) {
-                    handleSelectReport(data[0]);
+                    handleSelectReport(allReports[0]);
                 }
             }
         } catch (error) {
@@ -75,11 +124,14 @@ export default function ReportsPage() {
         }
     };
 
-    const handleSelectReport = async (report: ReportSummary) => {
+    const handleSelectReport = async (report: UnifiedReport) => {
         setSelectedReport(report);
         setLoadingContent(true);
         try {
-            const content = await fetchReportContent(report.filename);
+            // Use appropriate API based on report type
+            const content = report.type === 'stock'
+                ? await fetchStockReportContent(report.filename)
+                : await fetchReportContent(report.filename);
             setReportContent(content);
         } catch (error) {
             console.error("Failed to load content", error);
@@ -88,19 +140,24 @@ export default function ReportsPage() {
         }
     };
 
-    const handleDeleteReport = async (e: React.MouseEvent, filename: string) => {
+    const handleDeleteReport = async (e: React.MouseEvent, report: UnifiedReport) => {
         e.stopPropagation(); // Prevent selecting the report when clicking delete
         if (!window.confirm('Are you sure you want to delete this report?')) return;
 
         try {
-            await deleteReport(filename);
-            
+            // Use appropriate API based on report type
+            if (report.type === 'stock') {
+                await deleteStockReport(report.filename);
+            } else {
+                await deleteReport(report.filename);
+            }
+
             // If the deleted report was selected, clear selection
-            if (selectedReport?.filename === filename) {
+            if (selectedReport?.filename === report.filename) {
                 setSelectedReport(null);
                 setReportContent('');
             }
-            
+
             // Reload list
             await loadReports();
         } catch (error) {
@@ -153,7 +210,7 @@ export default function ReportsPage() {
             
             // Convert to image and download
             const link = document.createElement('a');
-            const fileName = `${selectedReport.fund_name || 'report'}_${selectedReport.mode}_${selectedReport.date}.png`;
+            const fileName = `${selectedReport.name || 'report'}_${selectedReport.mode}_${selectedReport.date}.png`;
             link.download = fileName.replace(/[^a-zA-Z0-9_\-一-龥]/g, '_');
             link.href = canvas.toDataURL('image/png');
             link.click();
@@ -164,30 +221,40 @@ export default function ReportsPage() {
         }
     };
 
-    // Advanced Grouping Logic: Search -> Date -> Fund -> Report
+    // Advanced Grouping Logic: Search -> Date -> Type -> Entity -> Report
     const groupedData = useMemo(() => {
         // 1. Filter
         const filtered = reports.filter(r => {
             const q = searchQuery.toLowerCase();
             return (
                 r.date.includes(q) ||
-                (r.fund_name && r.fund_name.toLowerCase().includes(q)) ||
-                (r.fund_code && r.fund_code.includes(q))
+                (r.name && r.name.toLowerCase().includes(q)) ||
+                (r.code && r.code.includes(q))
             );
         });
 
-        // 2. Group by Date
-        const dateGroups: Record<string, { overview: ReportSummary[], funds: Record<string, ReportSummary[]> }> = {};
+        // 2. Group by Date, then by type (fund/stock)
+        const dateGroups: Record<string, {
+            overview: UnifiedReport[],
+            funds: Record<string, UnifiedReport[]>,
+            stocks: Record<string, UnifiedReport[]>
+        }> = {};
 
         filtered.forEach(r => {
             if (!dateGroups[r.date]) {
-                dateGroups[r.date] = { overview: [], funds: {} };
+                dateGroups[r.date] = { overview: [], funds: {}, stocks: {} };
             }
 
             if (r.is_summary) {
                 dateGroups[r.date].overview.push(r);
+            } else if (r.type === 'stock') {
+                const stockKey = `${r.name}|${r.code}`;
+                if (!dateGroups[r.date].stocks[stockKey]) {
+                    dateGroups[r.date].stocks[stockKey] = [];
+                }
+                dateGroups[r.date].stocks[stockKey].push(r);
             } else {
-                const fundKey = `${r.fund_name}|${r.fund_code}`;
+                const fundKey = `${r.name}|${r.code}`;
                 if (!dateGroups[r.date].funds[fundKey]) {
                     dateGroups[r.date].funds[fundKey] = [];
                 }
@@ -198,6 +265,7 @@ export default function ReportsPage() {
         // 3. Convert to Array and Sort
         return Object.keys(dateGroups).sort((a, b) => b.localeCompare(a)).map(date => {
             const group = dateGroups[date];
+
             const fundList = Object.keys(group.funds).map(key => {
                 const [name, code] = key.split('|');
                 return {
@@ -208,10 +276,21 @@ export default function ReportsPage() {
                 };
             });
 
+            const stockList = Object.keys(group.stocks).map(key => {
+                const [name, code] = key.split('|');
+                return {
+                    key,
+                    name,
+                    code,
+                    reports: group.stocks[key].sort((a, _b) => (a.mode === 'pre' ? -1 : 1)) // Pre first
+                };
+            });
+
             return {
                 date,
                 overviews: group.overview,
-                funds: fundList
+                funds: fundList,
+                stocks: stockList
             };
         });
     }, [reports, searchQuery]);
@@ -285,9 +364,9 @@ export default function ReportsPage() {
                                                     primaryTypographyProps={{ fontSize: '0.85rem', fontWeight: 500, color: '#0f172a' }}
                                                     secondaryTypographyProps={{ fontSize: '0.65rem', color: '#64748b', letterSpacing: '0.05em' }}
                                                 />
-                                                <IconButton 
-                                                    size="small" 
-                                                    onClick={(e) => handleDeleteReport(e, report.filename)}
+                                                <IconButton
+                                                    size="small"
+                                                    onClick={(e) => handleDeleteReport(e, report)}
                                                     className="delete-icon transition-opacity opacity-0 hover:text-red-500 text-slate-300"
                                                 >
                                                     <DeleteIcon fontSize="small" style={{ fontSize: 16 }} />
@@ -344,9 +423,73 @@ export default function ReportsPage() {
                                                                         primary={report.mode === 'pre' ? t('reports.strategy_analysis') : t('reports.performance_review')}
                                                                         primaryTypographyProps={{ fontSize: '0.8rem', color: '#334155' }}
                                                                     />
-                                                                    <IconButton 
-                                                                        size="small" 
-                                                                        onClick={(e) => handleDeleteReport(e, report.filename)}
+                                                                    <IconButton
+                                                                        size="small"
+                                                                        onClick={(e) => handleDeleteReport(e, report)}
+                                                                        className="delete-icon transition-opacity opacity-0 hover:text-red-500 text-slate-300"
+                                                                    >
+                                                                        <DeleteIcon fontSize="small" style={{ fontSize: 16 }} />
+                                                                    </IconButton>
+                                                                </ListItemButton>
+                                                            ))}
+                                                        </List>
+                                                    </Collapse>
+                                                </Box>
+                                            );
+                                        })}
+
+                                        {/* Level 2: Stocks Group */}
+                                        {group.stocks.map(stock => {
+                                            const isStockExpanded = expandedFunds.has(`${group.date}-stock-${stock.key}`);
+                                            return (
+                                                <Box key={`stock-${stock.key}`}>
+                                                    <ListItemButton
+                                                        onClick={() => toggleFund(`${group.date}-stock-${stock.key}`)}
+                                                        sx={{ pl: 4, py: 1 }}
+                                                        className="hover:bg-slate-50"
+                                                    >
+                                                        <ListItemIcon sx={{ minWidth: 28 }}>
+                                                            <ShowChartIcon fontSize="small" sx={{ fontSize: 18, color: '#10b981' }} />
+                                                        </ListItemIcon>
+                                                        <ListItemText
+                                                            primary={stock.name}
+                                                            secondary={stock.code}
+                                                            primaryTypographyProps={{ fontSize: '0.85rem', fontWeight: 500, color: '#334155' }}
+                                                            secondaryTypographyProps={{ fontSize: '0.7rem', fontFamily: 'monospace', color: '#64748b' }}
+                                                        />
+                                                        {isStockExpanded ? <ExpandLess fontSize="small" sx={{ fontSize: 14, color: '#cbd5e1' }} /> : <ExpandMore fontSize="small" sx={{ fontSize: 14, color: '#cbd5e1' }} />}
+                                                    </ListItemButton>
+
+                                                    {/* Level 3: Stock Reports */}
+                                                    <Collapse in={isStockExpanded} timeout="auto" unmountOnExit>
+                                                        <List component="div" disablePadding className="bg-emerald-50/30">
+                                                            {stock.reports.map(report => (
+                                                                <ListItemButton
+                                                                    key={report.filename}
+                                                                    sx={{
+                                                                        pl: 8,
+                                                                        py: 1,
+                                                                        borderLeft: selectedReport?.filename === report.filename ? '3px solid #10b981' : '3px solid transparent',
+                                                                        bgcolor: selectedReport?.filename === report.filename ? '#ecfdf5' : 'transparent',
+                                                                        '&:hover .delete-icon': { opacity: 1 }
+                                                                    }}
+                                                                    selected={selectedReport?.filename === report.filename}
+                                                                    onClick={() => handleSelectReport(report)}
+                                                                    className="hover:bg-emerald-50 group"
+                                                                >
+                                                                    <ListItemIcon sx={{ minWidth: 24 }}>
+                                                                        {report.mode === 'pre' ?
+                                                                            <TrendingUpIcon sx={{ fontSize: 16, color: '#10b981' }} /> :
+                                                                            <TrendingDownIcon sx={{ fontSize: 16, color: '#f59e0b' }} />
+                                                                        }
+                                                                    </ListItemIcon>
+                                                                    <ListItemText
+                                                                        primary={report.mode === 'pre' ? t('reports.types.pre_market') : t('reports.types.post_market')}
+                                                                        primaryTypographyProps={{ fontSize: '0.8rem', color: '#334155' }}
+                                                                    />
+                                                                    <IconButton
+                                                                        size="small"
+                                                                        onClick={(e) => handleDeleteReport(e, report)}
                                                                         className="delete-icon transition-opacity opacity-0 hover:text-red-500 text-slate-300"
                                                                     >
                                                                         <DeleteIcon fontSize="small" style={{ fontSize: 16 }} />
@@ -397,15 +540,19 @@ export default function ReportsPage() {
                                 <div className="flex justify-between items-start mb-6">
                                     <div>
                                         <Typography variant="caption" className="text-primary-DEFAULT font-bold tracking-[0.2em] block mb-2">
-                                            {selectedReport.is_summary ? t('reports.market_intelligence') : t('reports.fund_analysis')}
+                                            {selectedReport.is_summary
+                                                ? t('reports.market_intelligence')
+                                                : selectedReport.type === 'stock'
+                                                    ? t('reports.stock_analysis')
+                                                    : t('reports.fund_analysis')}
                                         </Typography>
                                         <Typography variant="h4" className="text-slate-900 font-extrabold tracking-tight mb-2">
-                                            {selectedReport.is_summary ? t('reports.daily_overview') : selectedReport.fund_name}
+                                            {selectedReport.is_summary ? t('reports.daily_overview') : selectedReport.name}
                                         </Typography>
                                         {!selectedReport.is_summary && (
                                             <div className="flex items-center gap-2">
                                                 <span className="font-mono text-sm text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200">
-                                                    {selectedReport.fund_code}
+                                                    {selectedReport.code}
                                                 </span>
                                             </div>
                                         )}
@@ -419,12 +566,26 @@ export default function ReportsPage() {
                                 </div>
 
                                 <div className="flex gap-2">
+                                    {!selectedReport.is_summary && (
+                                        <Chip
+                                            icon={selectedReport.type === 'stock'
+                                                ? <ShowChartIcon style={{ fontSize: 14 }} />
+                                                : <BusinessCenterIcon style={{ fontSize: 14 }} />}
+                                            label={selectedReport.type === 'stock' ? t('reports.stock') : t('reports.fund')}
+                                            size="small"
+                                            className={`${
+                                                selectedReport.type === 'stock'
+                                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                                                    : 'bg-slate-50 text-slate-600 border border-slate-200'
+                                            } font-medium`}
+                                        />
+                                    )}
                                     <Chip
                                         label={selectedReport.mode === 'pre' ? 'PRE-MARKET' : 'POST-MARKET'}
                                         size="small"
                                         className={`${
-                                            selectedReport.mode === 'pre' 
-                                            ? 'bg-blue-50 text-blue-700 border border-blue-100' 
+                                            selectedReport.mode === 'pre'
+                                            ? 'bg-blue-50 text-blue-700 border border-blue-100'
                                             : 'bg-amber-50 text-amber-700 border border-amber-100'
                                         } font-bold tracking-wider`}
                                     />

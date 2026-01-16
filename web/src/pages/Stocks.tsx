@@ -38,14 +38,17 @@ import AnalyticsIcon from '@mui/icons-material/Analytics';
 import EditIcon from '@mui/icons-material/Edit';
 import BusinessIcon from '@mui/icons-material/Business';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import WbSunnyIcon from '@mui/icons-material/WbSunny';
+import NightsStayIcon from '@mui/icons-material/NightsStay';
 
-import { 
-  fetchStocks, 
-  saveStock, 
-  deleteStock, 
-  searchMarketStocks, 
+import {
+  fetchStocks,
+  saveStock,
+  deleteStock,
+  searchMarketStocks,
   fetchStockDetails,
-  fetchStockHistory
+  fetchStockHistory,
+  analyzeStock
 } from '../api';
 
 import type { MarketStock, StockItem, StockDetails, NavPoint } from '../api';
@@ -197,7 +200,7 @@ export default function StocksPage() {
     setLoadingDetails(true);
     setStockDetails(null);
     setHistory([]);
-    
+
     try {
       const [details, hist] = await Promise.all([
           fetchStockDetails(stock.code),
@@ -209,6 +212,18 @@ export default function StocksPage() {
       console.error("Failed to load stock details", error);
     } finally {
       setLoadingDetails(false);
+    }
+  };
+
+  const handleAnalyzeStock = async (stock: StockItem, mode: 'pre' | 'post') => {
+    handleCloseMenu();
+    showNotify(t('stocks.messages.analysis_started', { name: stock.name, mode: mode === 'pre' ? t('stocks.analysis.pre_market') : t('stocks.analysis.post_market') }), 'info');
+    try {
+      await analyzeStock(stock.code, mode);
+      showNotify(t('stocks.messages.analysis_success', { name: stock.name }), 'success');
+    } catch (error) {
+      console.error('Analysis failed:', error);
+      showNotify(t('stocks.messages.analysis_error'), 'error');
     }
   };
 
@@ -396,9 +411,9 @@ export default function StocksPage() {
         anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
         PaperProps={{
             elevation: 2,
-            sx: { 
-                minWidth: 200, 
-                bgcolor: '#ffffff', 
+            sx: {
+                minWidth: 200,
+                bgcolor: '#ffffff',
                 border: '1px solid #e2e8f0',
                 borderRadius: '12px',
                 mt: 1,
@@ -407,10 +422,21 @@ export default function StocksPage() {
         }}
       >
         <MenuItem onClick={() => { handleCloseMenu(); if (menuStock) handleViewDetails(menuStock); }} sx={{ py: 1.5 }}>
-            <ListItemIcon><AnalyticsIcon fontSize="small" sx={{ color: '#6366f1' }} /></ListItemIcon>    
+            <ListItemIcon><AnalyticsIcon fontSize="small" sx={{ color: '#6366f1' }} /></ListItemIcon>
             <ListItemText primary={t('stocks.menu.view_details')} primaryTypographyProps={{ fontSize: '0.85rem', fontWeight: 700 }} />
         </MenuItem>
-        
+
+        <Divider sx={{ my: 0.5, borderColor: '#f1f5f9' }} />
+
+        <MenuItem onClick={() => { if (menuStock) handleAnalyzeStock(menuStock, 'pre'); }} sx={{ py: 1 }}>
+            <ListItemIcon><WbSunnyIcon fontSize="small" sx={{ color: '#f59e0b' }} /></ListItemIcon>
+            <ListItemText primary={t('stocks.menu.pre_market_analysis')} primaryTypographyProps={{ fontSize: '0.85rem', color: '#334155' }} />
+        </MenuItem>
+        <MenuItem onClick={() => { if (menuStock) handleAnalyzeStock(menuStock, 'post'); }} sx={{ py: 1 }}>
+            <ListItemIcon><NightsStayIcon fontSize="small" sx={{ color: '#8b5cf6' }} /></ListItemIcon>
+            <ListItemText primary={t('stocks.menu.post_market_analysis')} primaryTypographyProps={{ fontSize: '0.85rem', color: '#334155' }} />
+        </MenuItem>
+
         <Divider sx={{ my: 0.5, borderColor: '#f1f5f9' }} />
 
         <MenuItem onClick={() => { handleCloseMenu(); if (menuStock) handleOpenDialog(menuStock); }} sx={{ py: 1 }}>

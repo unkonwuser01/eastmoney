@@ -22,12 +22,13 @@ from src.analysis.sentiment.dashboard import SentimentDashboard
 from src.analysis.commodities.gold_silver import GoldSilverAnalyst
 from src.analysis.dashboard import DashboardService
 from src.data_sources.akshare_api import search_funds
-from src.storage.db import init_db, get_active_funds, get_all_funds, upsert_fund, delete_fund, get_fund_by_code, get_all_stocks, upsert_stock, delete_stock
+from src.storage.db import init_db, get_active_funds, get_all_funds, upsert_fund, delete_fund, get_fund_by_code, get_all_stocks, upsert_stock, delete_stock, get_stock_by_code
 from src.scheduler.manager import scheduler_manager
-from src.report_gen import save_report
+from src.report_gen import save_report, save_stock_report
 # Updated import
 from src.data_sources.akshare_api import get_all_fund_list, get_stock_realtime_quote, get_all_stock_spot_map, get_stock_history
 import akshare as ak
+import pandas as pd
 from src.auth import Token, UserCreate, User, create_access_token, get_password_hash, verify_password, get_current_user, create_user, get_user_by_username
 from fastapi.security import OAuth2PasswordRequestForm
 
@@ -148,10 +149,16 @@ class StockItem(BaseModel):
     name: str
     market: Optional[str] = ""
     sector: Optional[str] = ""
+    pre_market_time: Optional[str] = "08:30"
+    post_market_time: Optional[str] = "15:30"
     is_active: bool = True
     price: Optional[float] = None
     change_pct: Optional[float] = None
     volume: Optional[float] = None
+
+
+class StockAnalyzeRequest(BaseModel):
+    mode: str = "pre"  # 'pre' or 'post'
 
 class SettingsUpdate(BaseModel):
     llm_provider: Optional[str] = None
@@ -937,6 +944,9 @@ async def upsert_stock_endpoint(code: str, stock: StockItem, current_user: User 
         if not data.get('sector'):
              data = await asyncio.to_thread(_enrich_stock_info, data)
         upsert_stock(data, user_id=current_user.id)
+        # Update scheduler jobs
+        data['user_id'] = current_user.id
+        scheduler_manager.add_stock_jobs(data)
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -945,8 +955,113 @@ async def upsert_stock_endpoint(code: str, stock: StockItem, current_user: User 
 async def delete_stock_endpoint(code: str, current_user: User = Depends(get_current_user)):
     try:
         delete_stock(code, user_id=current_user.id)
+        scheduler_manager.remove_stock_jobs(code)
         return {"status": "success"}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Stock Analysis Endpoints ---
+
+@app.post("/api/stocks/{code}/analyze")
+async def analyze_stock_endpoint(code: str, request: StockAnalyzeRequest, current_user: User = Depends(get_current_user)):
+    """Trigger stock analysis (pre-market or post-market)"""
+    if request.mode not in ["pre", "post"]:
+        raise HTTPException(status_code=400, detail="Invalid mode. Use 'pre' or 'post'.")
+
+    try:
+        stock = get_stock_by_code(code, user_id=current_user.id)
+        if not stock:
+            raise HTTPException(status_code=404, detail=f"Stock {code} not found")
+
+        print(f"Triggering {request.mode}-market analysis for stock {code} (User: {current_user.id})")
+        scheduler_manager.run_stock_analysis_task(code, request.mode, user_id=current_user.id)
+        return {"status": "success", "message": f"Stock {request.mode}-market analysis triggered for {code}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stocks/reports")
+async def list_stock_reports(current_user: User = Depends(get_current_user)):
+    """List all stock analysis reports for the current user"""
+    user_report_dir = get_user_report_dir(current_user.id)
+    stocks_dir = os.path.join(user_report_dir, "stocks")
+
+    if not os.path.exists(stocks_dir):
+        return []
+
+    reports = []
+    files = glob.glob(os.path.join(stocks_dir, "*.md"))
+    files.sort(key=os.path.getmtime, reverse=True)
+
+    for f in files:
+        filename = os.path.basename(f)
+        try:
+            # Format: YYYY-MM-DD_{mode}_{stock_code}_{stock_name}.md
+            name_no_ext = os.path.splitext(filename)[0]
+            parts = name_no_ext.split("_")
+
+            if len(parts) >= 4:
+                date_str = parts[0]
+                mode = parts[1]
+                code = parts[2]
+                name = "_".join(parts[3:])
+
+                reports.append({
+                    "filename": filename,
+                    "date": date_str,
+                    "mode": mode,
+                    "stock_code": code,
+                    "stock_name": name
+                })
+        except Exception as e:
+            print(f"Error parsing stock report {filename}: {e}")
+            continue
+
+    return reports
+
+
+@app.get("/api/stocks/reports/{filename}")
+async def get_stock_report(filename: str, current_user: User = Depends(get_current_user)):
+    """Get the content of a stock analysis report"""
+    if not filename.endswith(".md") or ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    user_report_dir = get_user_report_dir(current_user.id)
+    filepath = os.path.join(user_report_dir, "stocks", filename)
+
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    return {"content": content}
+
+
+@app.delete("/api/stocks/reports/{filename}")
+async def delete_stock_report(filename: str, current_user: User = Depends(get_current_user)):
+    """Delete a stock analysis report"""
+    try:
+        if not filename.endswith(".md") or ".." in filename or "/" in filename or "\\" in filename:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
+        user_report_dir = get_user_report_dir(current_user.id)
+        file_path = os.path.join(user_report_dir, "stocks", filename)
+
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return {"status": "success", "message": f"Deleted {filename}"}
+        else:
+            raise HTTPException(status_code=404, detail="File not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting stock report: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/market/stocks")

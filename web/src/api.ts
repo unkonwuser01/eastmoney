@@ -270,3 +270,32 @@ export const fetchStockHistory = async (code: string): Promise<NavPoint[]> => {
     const response = await api.get(`/market/stocks/${code}/history`);
     return response.data;
 };
+
+
+// --- Stock Analysis API ---
+
+export const analyzeStock = async (code: string, mode: 'pre' | 'post'): Promise<void> => {
+    await api.post(`/stocks/${code}/analyze`, { mode });
+};
+
+export interface StockReportSummary {
+    filename: string;
+    date: string;
+    mode: 'pre' | 'post';
+    stock_code: string;
+    stock_name: string;
+}
+
+export const fetchStockReports = async (): Promise<StockReportSummary[]> => {
+    const response = await api.get('/stocks/reports');
+    return response.data;
+};
+
+export const fetchStockReportContent = async (filename: string): Promise<string> => {
+    const response = await api.get(`/stocks/reports/${filename}`);
+    return response.data.content;
+};
+
+export const deleteStockReport = async (filename: string): Promise<void> => {
+    await api.delete(`/stocks/reports/${filename}`);
+};

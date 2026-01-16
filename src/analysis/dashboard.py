@@ -120,7 +120,15 @@ class DashboardService:
                 if not flow_df.empty:
                     # Usually returns historical data. Get last row
                     last = flow_df.iloc[-1]
-                    data["main_flow"] = round(float(last.get('主力净流入-净额', 0)) / 100000000, 2)
+                    val = last.get('主力净流入-净额', 0)
+                    try:
+                        if str(val).strip() == '-':
+                            val = 0.0
+                        else:
+                            val = float(val)
+                    except:
+                        val = 0.0
+                    data["main_flow"] = round(val / 100000000, 2)
             except:
                 pass
                 
@@ -261,10 +269,19 @@ class DashboardService:
             if not df.empty:
                 # Top 10 inflow
                 for _, row in df.head(10).iterrows():
+                    net_buy_val = row.get('今日主力净流入-净额', 0)
+                    try:
+                        if str(net_buy_val).strip() == '-':
+                             net_buy_float = 0.0
+                        else:
+                             net_buy_float = float(net_buy_val)
+                    except (ValueError, TypeError):
+                        net_buy_float = 0.0
+                        
                     stocks.append({
                         "code": str(row.get('代码')),
                         "name": row.get('名称'),
-                        "net_buy": round(float(row.get('今日主力净流入-净额', 0)) / 100000000, 2), # Billions? usually units vary
+                        "net_buy": round(net_buy_float / 100000000, 2), # Billions? usually units vary
                         "change_pct": row.get('今日涨跌幅')
                     })
         except Exception as e:

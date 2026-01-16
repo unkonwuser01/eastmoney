@@ -55,8 +55,11 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             code TEXT NOT NULL,
             name TEXT NOT NULL,
-            market TEXT, 
+            market TEXT,
             sector TEXT,
+            pre_market_time TEXT DEFAULT '08:30',
+            post_market_time TEXT DEFAULT '15:30',
+            is_active BOOLEAN DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             user_id INTEGER REFERENCES users(id),
             UNIQUE(user_id, code)
@@ -74,6 +77,13 @@ def init_db():
     except sqlite3.OperationalError:
         # Column likely exists
         pass
+
+    # Migration: Add scheduling columns to stocks if not exists
+    for col, default in [('pre_market_time', "'08:30'"), ('post_market_time', "'15:30'"), ('is_active', '1')]:
+        try:
+            c.execute(f'ALTER TABLE stocks ADD COLUMN {col} TEXT DEFAULT {default}')
+        except sqlite3.OperationalError:
+            pass
         
     conn.commit()
     conn.close()
@@ -263,40 +273,75 @@ def get_all_stocks(user_id: int) -> List[Dict]:
     conn.close()
     return [dict(s) for s in stocks]
 
+
+def get_active_stocks(user_id: int = None) -> List[Dict]:
+    """Get stocks with is_active = 1 for scheduled analysis."""
+    conn = get_db_connection()
+    sql = 'SELECT * FROM stocks WHERE is_active = 1'
+    params = []
+    if user_id:
+        sql += ' AND user_id = ?'
+        params.append(user_id)
+
+    stocks = conn.execute(sql, tuple(params)).fetchall()
+    conn.close()
+    return [dict(s) for s in stocks]
+
+
+def get_stock_by_code(code: str, user_id: int = None) -> Optional[Dict]:
+    """Get a single stock by code."""
+    conn = get_db_connection()
+    sql = 'SELECT * FROM stocks WHERE code = ?'
+    params = [code]
+    if user_id:
+        sql += ' AND user_id = ?'
+        params.append(user_id)
+
+    stock = conn.execute(sql, tuple(params)).fetchone()
+    conn.close()
+    return dict(stock) if stock else None
+
+
 def upsert_stock(stock_data: Dict, user_id: int):
     if not user_id:
         raise ValueError("user_id required")
-        
+
     conn = get_db_connection()
     c = conn.cursor()
-    
-    exists = c.execute('SELECT 1 FROM stocks WHERE code = ? AND user_id = ?', 
+
+    exists = c.execute('SELECT 1 FROM stocks WHERE code = ? AND user_id = ?',
                       (stock_data['code'], user_id)).fetchone()
-    
+
     if exists:
         c.execute('''
-            UPDATE stocks 
-            SET name=?, market=?, sector=?
+            UPDATE stocks
+            SET name=?, market=?, sector=?, pre_market_time=?, post_market_time=?, is_active=?
             WHERE code=? AND user_id=?
         ''', (
             stock_data['name'],
             stock_data.get('market', ''),
             stock_data.get('sector', ''),
+            stock_data.get('pre_market_time', '08:30'),
+            stock_data.get('post_market_time', '15:30'),
+            stock_data.get('is_active', 1),
             stock_data['code'],
             user_id
         ))
     else:
         c.execute('''
-            INSERT INTO stocks (code, name, market, sector, user_id)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO stocks (code, name, market, sector, pre_market_time, post_market_time, is_active, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             stock_data['code'],
             stock_data['name'],
             stock_data.get('market', ''),
             stock_data.get('sector', ''),
+            stock_data.get('pre_market_time', '08:30'),
+            stock_data.get('post_market_time', '15:30'),
+            stock_data.get('is_active', 1),
             user_id
         ))
-    
+
     conn.commit()
     conn.close()
 
