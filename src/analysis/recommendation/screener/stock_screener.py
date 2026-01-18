@@ -211,8 +211,8 @@ class ShortTermStockScreener(BaseScreener):
                 turnover = self._safe_float(spot.get('成交额'))
 
                 # 资金流向数据
-                main_net_inflow = self._safe_float(row.get('主力净流入-净额'))
-                main_net_pct = self._safe_float(row.get('主力净流入-净占比'))
+                main_net_inflow = self._safe_float(row.get('今日主力净流入-净额'))
+                main_net_pct = self._safe_float(row.get('今日主力净流入-净占比'))
 
                 # 获取股票行业
                 sector = sector_map.get(code, '')
