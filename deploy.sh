@@ -10,7 +10,7 @@ CONTAINER_NAME="eastmoney-container"
 PORT="9000"
 
 echo "🚀 开始构建 Docker 镜像..."
-docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+docker build --network=host -t ${IMAGE_NAME}:${IMAGE_TAG} .
 
 echo "✅ 镜像构建完成!"
 
@@ -21,12 +21,13 @@ docker rm ${CONTAINER_NAME} 2>/dev/null || true
 echo "🎯 启动新容器..."
 docker run -d \
   --name ${CONTAINER_NAME} \
-  -p ${PORT}:9000 \
+  --network host \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/reports:/app/reports \
   -v $(pwd)/config:/app/config \
   -v $(pwd)/.env:/app/.env \
   -e TZ=Asia/Shanghai \
+  -e DB_FILE_PATH=/app/data/funds.db \
   --restart unless-stopped \
   ${IMAGE_NAME}:${IMAGE_TAG}
 
