@@ -76,7 +76,7 @@ export default function ShareholderTab({ code }: ShareholderTabProps) {
   const formatPercent = (val?: number) => val != null ? `${val.toFixed(2)}%` : '---';
 
   // Prepare holder number trend for chart
-  const holderTrend = data.holder_number_trend
+  const holderTrend = (data.holder_number_trend || [])
     .slice()
     .reverse()
     .map(h => ({
@@ -118,7 +118,7 @@ export default function ShareholderTab({ code }: ShareholderTabProps) {
     );
   };
 
-  const currentPeriodHolders = data.top10_holders[selectedPeriod]?.holders || [];
+  const currentPeriodHolders = (data.top10_holders || [])[selectedPeriod]?.holders || [];
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -197,7 +197,7 @@ export default function ShareholderTab({ code }: ShareholderTabProps) {
       )}
 
       {/* Top 10 Holders Table */}
-      {data.top10_holders.length > 0 && (
+      {(data.top10_holders || []).length > 0 && (
         <Box>
           <Typography variant="overline" sx={{ color: '#0f172a', fontWeight: 900, mb: 1, display: 'block' }}>
             {t('stocks.shareholder.top10')}
@@ -210,7 +210,7 @@ export default function ShareholderTab({ code }: ShareholderTabProps) {
             sx={{ mb: 2, minHeight: 32 }}
             TabIndicatorProps={{ sx: { bgcolor: '#6366f1' } }}
           >
-            {data.top10_holders.slice(0, 4).map((period, i) => (
+            {(data.top10_holders || []).slice(0, 4).map((period, i) => (
               <Tab
                 key={i}
                 label={period.period?.substring(0, 4) + '-Q' + Math.ceil(parseInt(period.period?.substring(4, 6) || '3') / 3)}

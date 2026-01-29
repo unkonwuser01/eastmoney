@@ -45,6 +45,11 @@ class AlphaStrategy:
             'holdings': cls._compute_holdings_score(factors),
         }
 
+        # Ensure all scores are in 0-100 range
+        for key in scores:
+            if scores[key] is not None:
+                scores[key] = max(0, min(100, scores[key]))
+
         total_score = sum(
             scores[key] * cls.WEIGHTS[key]
             for key in scores
@@ -58,7 +63,8 @@ class AlphaStrategy:
         )
 
         if weight_sum > 0:
-            return round(total_score / weight_sum * 100, 2)
+            final_score = total_score / weight_sum
+            return round(max(0, min(100, final_score)), 2)
 
         return 50.0
 

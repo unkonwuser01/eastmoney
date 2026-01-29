@@ -184,8 +184,10 @@ class SentimentFactors:
             # Trend score: positive = accelerating inflow, negative = decelerating
             if first_flow != 0:
                 trend_ratio = (second_flow - first_flow) / abs(first_flow)
+                # Clamp trend_ratio to prevent extreme values
+                trend_ratio = max(-2.0, min(2.0, trend_ratio))
                 # Normalize to 0-100 scale (50 = neutral)
-                result['main_inflow_trend'] = round(50 + (trend_ratio * 25), 2)
+                result['main_inflow_trend'] = round(max(0, min(100, 50 + (trend_ratio * 25))), 2)
             else:
                 result['main_inflow_trend'] = 50 if second_flow >= 0 else 40
 

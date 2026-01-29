@@ -1,8 +1,10 @@
 """
 Stock management endpoints.
 """
+from glob import glob
 import json
 import asyncio
+import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
@@ -12,7 +14,7 @@ import pandas as pd
 
 from app.models.stocks import StockItem, StockAnalyzeRequest
 from app.models.auth import User
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, get_user_report_dir
 from app.core.cache import stock_feature_cache
 from app.core.utils import sanitize_for_json, sanitize_data
 from src.storage.db import get_all_stocks, upsert_stock, delete_stock
@@ -156,7 +158,45 @@ async def upsert_stock_endpoint(code: str, stock: StockItem, current_user: User 
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+    
+@router.get("/reports")
+async def list_stock_reports(current_user: User = Depends(get_current_user)):
+    """List all stock analysis reports for the current user"""
+    user_report_dir = get_user_report_dir(current_user.id)
+    stocks_dir = os.path.join(user_report_dir, "stocks")
+    
+    if not os.path.exists(stocks_dir):
+        return []
 
+    reports = []
+    files = glob.glob(os.path.join(stocks_dir, "*.md"))
+    files.sort(key=os.path.getmtime, reverse=True)
+
+    for f in files:
+        filename = os.path.basename(f)
+        try:
+            # Format: YYYY-MM-DD_{mode}_{stock_code}_{stock_name}.md
+            name_no_ext = os.path.splitext(filename)[0]
+            parts = name_no_ext.split("_")
+
+            if len(parts) >= 4:
+                date_str = parts[0]
+                mode = parts[1]
+                code = parts[2]
+                name = "_".join(parts[3:])
+
+                reports.append({
+                    "filename": filename,
+                    "date": date_str,
+                    "mode": mode,
+                    "stock_code": code,
+                    "stock_name": name
+                })
+        except Exception as e:
+            print(f"Error parsing stock report {filename}: {e}")
+            continue
+
+    return reports
 
 @router.delete("/{code}")
 async def delete_stock_endpoint(code: str, current_user: User = Depends(get_current_user)):

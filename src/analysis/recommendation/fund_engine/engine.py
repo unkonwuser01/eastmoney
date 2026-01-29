@@ -113,6 +113,10 @@ class FundRecommendationEngine:
         Returns:
             List of recommendation dicts sorted by score
         """
+        import time
+        start_time = time.time()
+        print(f"[FundEngine] get_recommendations started: strategy={strategy}, top_n={top_n}")
+
         if top_n is None:
             top_n = self.DEFAULT_TOP_N
 
@@ -125,14 +129,23 @@ class FundRecommendationEngine:
                 trade_date = format_date_yyyymmdd()
 
         trade_date_db = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
+        print(f"[FundEngine] Using trade_date_db={trade_date_db}")
 
         # Get top funds from cache/database
+        cache_start = time.time()
         cached_factors = factor_cache.get_top_funds(
             trade_date_db,
             score_type=strategy,
             limit=top_n * 2,
             min_score=min_score
         )
+        print(f"[FundEngine] Cache query took {time.time() - cache_start:.2f}s, found {len(cached_factors) if cached_factors else 0} funds")
+
+        # IMPORTANT: Do NOT compute on-demand - factors should be pre-computed by scheduled task
+        # If cache is empty, return empty list instead of blocking with real-time computation
+        if not cached_factors:
+            print(f"[FundEngine] WARNING: No cached fund factors for {trade_date_db}. Please run factor computation task first.")
+            return []
 
         recommendations = []
 
@@ -158,10 +171,15 @@ class FundRecommendationEngine:
                 'trade_date': trade_date_db,
                 'factors': {
                     'sharpe_1y': factors.get('sharpe_1y'),
+                    'sharpe_20d': factors.get('sharpe_20d'),
                     'max_drawdown_1y': factors.get('max_drawdown_1y'),
                     'return_1y': factors.get('return_1y'),
                     'return_1m': factors.get('return_1m'),
+                    'return_1w': factors.get('return_1w'),
+                    'volatility_60d': factors.get('volatility_60d'),
                     'manager_tenure_years': factors.get('manager_tenure_years'),
+                    'momentum_score': factors.get('short_term_score'),
+                    'alpha_score': factors.get('long_term_score'),
                 }
             })
 
@@ -172,7 +190,54 @@ class FundRecommendationEngine:
 
         recommendations.sort(key=lambda x: x['score'], reverse=True)
 
+        print(f"[FundEngine] get_recommendations completed in {time.time() - start_time:.2f}s, returning {len(recommendations)} funds")
         return recommendations[:top_n]
+
+    def _compute_on_demand(
+        self,
+        trade_date: str,
+        strategy: str,
+        limit: int = 40
+    ) -> List[Dict]:
+        """
+        Compute fund factors on-demand when cache is empty.
+
+        Uses active user funds from the database.
+        """
+        print(f"Fund cache empty, computing factors on-demand...")
+
+        # Get active funds from database
+        conn = get_db_connection()
+        results = conn.execute(
+            "SELECT DISTINCT code FROM funds WHERE is_active = 1 LIMIT ?",
+            (limit,)
+        ).fetchall()
+        conn.close()
+
+        codes = [r[0] for r in results] if results else []
+
+        if not codes:
+            print("No active funds found for on-demand computation")
+            return []
+
+        computed_factors = []
+        score_key = 'short_term_score' if strategy == 'short_term' else 'long_term_score'
+
+        for code in codes:
+            try:
+                factors = self.compute_factors(code, trade_date, use_cache=True)
+                if factors and factors.get(score_key, 0) > 0:
+                    factors['code'] = code
+                    computed_factors.append(factors)
+            except Exception as e:
+                print(f"Error computing factors for fund {code}: {e}")
+                continue
+
+        # Sort by strategy score
+        computed_factors.sort(key=lambda x: x.get(score_key, 0), reverse=True)
+
+        print(f"Computed factors for {len(computed_factors)} funds on-demand")
+        return computed_factors
 
     def get_single_recommendation(
         self,
@@ -251,18 +316,28 @@ class FundRecommendationEngine:
         """Get basic fund information from database."""
         conn = get_db_connection()
 
-        # Try funds table first
+        # Try user's funds table first
         result = conn.execute(
             "SELECT name, style FROM funds WHERE code = ?",
             (code,)
         ).fetchone()
 
-        if result:
+        if result and result[0]:
+            conn.close()
+            return {'name': result[0], 'type': result[1] or ''}
+
+        # Fallback to fund_basic table (market funds)
+        result = conn.execute(
+            "SELECT name, fund_type FROM fund_basic WHERE code = ?",
+            (code,)
+        ).fetchone()
+
+        if result and result[0]:
             conn.close()
             return {'name': result[0], 'type': result[1] or ''}
 
         conn.close()
-        return {'name': '', 'type': ''}
+        return {'name': code, 'type': ''}  # Use code as name if not found
 
 
 # Convenience functions

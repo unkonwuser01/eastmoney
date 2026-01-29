@@ -132,6 +132,43 @@ export interface SettingsUpdate {
   tavily_api_key?: string;
 }
 
+// Notification Settings
+export interface NotificationSettingsData {
+  email_enabled: boolean;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_user: string;
+  smtp_password_masked: string;
+  smtp_from_email: string;
+  smtp_use_tls: boolean;
+  recipient_email: string;
+  notify_on_report: boolean;
+  notify_on_alert: boolean;
+  notify_daily_summary: boolean;
+  quiet_hours_enabled: boolean;
+  quiet_hours_start: string;
+  quiet_hours_end: string;
+  daily_summary_time: string;
+}
+
+export interface NotificationSettingsUpdate {
+  email_enabled?: boolean;
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_user?: string;
+  smtp_password?: string;
+  smtp_from_email?: string;
+  smtp_use_tls?: boolean;
+  recipient_email?: string;
+  notify_on_report?: boolean;
+  notify_on_alert?: boolean;
+  notify_daily_summary?: boolean;
+  quiet_hours_enabled?: boolean;
+  quiet_hours_start?: string;
+  quiet_hours_end?: string;
+  daily_summary_time?: string;
+}
+
 export const fetchFunds = async (): Promise<FundItem[]> => {
   const response = await api.get('/funds');
   return response.data;
@@ -197,6 +234,21 @@ export const fetchSettings = async (): Promise<SettingsData> => {
 
 export const saveSettings = async (settings: SettingsUpdate): Promise<void> => {
   await api.post('/settings', settings);
+};
+
+// Notification Settings API
+export const fetchNotificationSettings = async (): Promise<NotificationSettingsData> => {
+  const response = await api.get('/settings/notifications');
+  return response.data;
+};
+
+export const saveNotificationSettings = async (settings: NotificationSettingsUpdate): Promise<void> => {
+  await api.post('/settings/notifications', settings);
+};
+
+export const sendTestEmail = async (recipient?: string): Promise<{ status: string; message: string }> => {
+  const response = await api.post('/settings/notifications/test', { recipient });
+  return response.data;
 };
 
 export const fetchLLMModels = async (provider: string, apiKey?: string, baseUrl?: string): Promise<{ models: string[], warning?: string }> => {
@@ -403,74 +455,6 @@ export interface RecommendationResult {
         personalized?: boolean;
     };
 }
-
-export interface RecommendationRequest {
-    mode: 'short' | 'long' | 'all';
-    force_refresh?: boolean;
-}
-
-// Task-based response for background generation
-export interface RecommendationTaskResponse {
-    status: 'started' | 'completed';
-    task_id?: string;
-    message?: string;
-    cached?: boolean;
-    result?: RecommendationResult;
-}
-
-export interface TaskStatusResponse {
-    task_id: string;
-    status: 'pending' | 'running' | 'completed' | 'failed';
-    progress: string;
-    mode: string;
-    result?: RecommendationResult;
-    completed_at?: string;
-    error?: string;
-}
-
-// Start recommendation generation (returns immediately with task_id)
-export const generateRecommendations = async (request: RecommendationRequest): Promise<RecommendationTaskResponse> => {
-    const response = await api.post('/recommend/generate', request);
-    return response.data;
-};
-
-// Poll task status
-export const getRecommendationTaskStatus = async (taskId: string): Promise<TaskStatusResponse> => {
-    const response = await api.get(`/recommend/task/${taskId}`);
-    return response.data;
-};
-
-// Helper: Poll until task completes (with callback for progress updates)
-export const pollRecommendationTask = async (
-    taskId: string,
-    onProgress?: (status: TaskStatusResponse) => void,
-    intervalMs: number = 5000,
-    maxAttempts: number = 200  // ~10 minutes max
-): Promise<RecommendationResult> => {
-    let attempts = 0;
-
-    while (attempts < maxAttempts) {
-        const status = await getRecommendationTaskStatus(taskId);
-
-        if (onProgress) {
-            onProgress(status);
-        }
-
-        if (status.status === 'completed' && status.result) {
-            return status.result;
-        }
-
-        if (status.status === 'failed') {
-            throw new Error(status.error || 'Task failed');
-        }
-
-        // Wait before next poll
-        await new Promise(resolve => setTimeout(resolve, intervalMs));
-        attempts++;
-    }
-
-    throw new Error('Task timed out');
-};
 
 export const fetchLatestRecommendations = async (): Promise<{
     available: boolean;
@@ -2663,7 +2647,7 @@ export interface RecommendationPerformance {
 export const generateRecommendationsV2 = async (
     request: RecommendationRequestV2
 ): Promise<RecommendationResultV2> => {
-    const response = await api.post('/recommend/v2/generate', request);
+    const response = await api.post('/recommend/generate', request);
     return response.data;
 };
 
@@ -2674,7 +2658,7 @@ export const getShortTermStocksV2 = async (
 ): Promise<{ stocks: RecommendationStockV2[]; trade_date: string }> => {
     const params: Record<string, any> = { limit };
     if (tradeDate) params.trade_date = tradeDate;
-    const response = await api.get('/recommend/v2/stocks/short', { params });
+    const response = await api.get('/recommend/stocks/short', { params });
     return response.data;
 };
 
@@ -2685,7 +2669,7 @@ export const getLongTermStocksV2 = async (
 ): Promise<{ stocks: RecommendationStockV2[]; trade_date: string }> => {
     const params: Record<string, any> = { limit };
     if (tradeDate) params.trade_date = tradeDate;
-    const response = await api.get('/recommend/v2/stocks/long', { params });
+    const response = await api.get('/recommend/stocks/long', { params });
     return response.data;
 };
 
@@ -2696,7 +2680,7 @@ export const getShortTermFundsV2 = async (
 ): Promise<{ funds: RecommendationFundV2[]; trade_date: string }> => {
     const params: Record<string, any> = { limit };
     if (tradeDate) params.trade_date = tradeDate;
-    const response = await api.get('/recommend/v2/funds/short', { params });
+    const response = await api.get('/recommend/funds/short', { params });
     return response.data;
 };
 
@@ -2707,7 +2691,7 @@ export const getLongTermFundsV2 = async (
 ): Promise<{ funds: RecommendationFundV2[]; trade_date: string }> => {
     const params: Record<string, any> = { limit };
     if (tradeDate) params.trade_date = tradeDate;
-    const response = await api.get('/recommend/v2/funds/long', { params });
+    const response = await api.get('/recommend/funds/long', { params });
     return response.data;
 };
 
@@ -2723,7 +2707,7 @@ export const analyzeStockV2 = async (
 }> => {
     const params: Record<string, string> = {};
     if (tradeDate) params.trade_date = tradeDate;
-    const response = await api.get(`/recommend/v2/analyze/stock/${code}`, { params });
+    const response = await api.get(`/recommend/analyze/stock/${code}`, { params });
     return response.data;
 };
 
@@ -2739,7 +2723,7 @@ export const analyzeFundV2 = async (
 }> => {
     const params: Record<string, string> = {};
     if (tradeDate) params.trade_date = tradeDate;
-    const response = await api.get(`/recommend/v2/analyze/fund/${code}`, { params });
+    const response = await api.get(`/recommend/analyze/fund/${code}`, { params });
     return response.data;
 };
 
@@ -2753,7 +2737,7 @@ export const getRecommendationPerformanceV2 = async (
     if (recType) params.rec_type = recType;
     if (startDate) params.start_date = startDate;
     if (endDate) params.end_date = endDate;
-    const response = await api.get('/recommend/v2/performance', { params });
+    const response = await api.get('/recommend/performance', { params });
     return response.data;
 };
 
@@ -2768,12 +2752,12 @@ export const computeFactorsV2 = async (
 }> => {
     const data: Record<string, string> = {};
     if (targetDate) data.target_date = targetDate;
-    const response = await api.post('/recommend/v2/compute-factors', data);
+    const response = await api.post('/recommend/compute-factors', data);
     return response.data;
 };
 
 // V2 Get Factor Status
 export const getFactorStatusV2 = async (): Promise<FactorStatus> => {
-    const response = await api.get('/recommend/v2/factor-status');
+    const response = await api.get('/recommend/factor-status');
     return response.data;
 };

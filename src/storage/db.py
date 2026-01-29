@@ -1,6 +1,8 @@
 import sqlite3
 import json
 import os
+import time
+import threading
 from typing import List, Dict, Optional
 from datetime import datetime
 
@@ -10,10 +12,45 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 DB_PATH = os.environ.get("DB_FILE_PATH", os.path.join(BASE_DIR, "funds.db"))
 FUNDS_JSON_PATH = os.path.join(BASE_DIR, "config", "funds.json")
 
+# Thread-local storage for database connections
+_local = threading.local()
+
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    """Get a database connection with WAL mode and proper timeout."""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=60.0)
     conn.row_factory = sqlite3.Row
+    # Enable WAL mode for better concurrency (allows reads while writing)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=60000")  # 60 second timeout
+    conn.execute("PRAGMA synchronous=NORMAL")  # Faster writes, still safe with WAL
     return conn
+
+
+def execute_with_retry(operation, max_retries=5, base_delay=0.5):
+    """Execute a database operation with retry logic for lock errors."""
+    last_error = None
+    for attempt in range(max_retries):
+        conn = None
+        try:
+            conn = get_db_connection()
+            result = operation(conn)
+            conn.commit()
+            return result
+        except sqlite3.OperationalError as e:
+            last_error = e
+            if "locked" in str(e).lower() and attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                print(f"Database locked, retrying in {delay:.1f}s... (attempt {attempt + 1}/{max_retries})")
+                time.sleep(delay)
+            else:
+                raise
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
+    raise last_error
 
 def init_db():
     conn = get_db_connection()
@@ -850,10 +887,7 @@ def save_recommendation(rec_data: Dict, user_id: int = None) -> int:
 
 
 def save_recommendation_report(report_data: Dict, user_id: int = None) -> int:
-    """Save a recommendation report."""
-    conn = get_db_connection()
-    c = conn.cursor()
-
+    """Save a recommendation report with retry on lock."""
     recommendations_json = report_data.get('recommendations_json')
     if isinstance(recommendations_json, dict):
         recommendations_json = json.dumps(recommendations_json, ensure_ascii=False)
@@ -862,22 +896,22 @@ def save_recommendation_report(report_data: Dict, user_id: int = None) -> int:
     if isinstance(market_context, dict):
         market_context = json.dumps(market_context, ensure_ascii=False)
 
-    c.execute('''
-        INSERT INTO recommendation_reports (
-            user_id, mode, report_content, recommendations_json, market_context
-        ) VALUES (?, ?, ?, ?, ?)
-    ''', (
-        user_id,
-        report_data.get('mode', 'all'),
-        report_data.get('report_content'),
-        recommendations_json,
-        market_context,
-    ))
+    def operation(conn):
+        c = conn.cursor()
+        c.execute('''
+            INSERT INTO recommendation_reports (
+                user_id, mode, report_content, recommendations_json, market_context
+            ) VALUES (?, ?, ?, ?, ?)
+        ''', (
+            user_id,
+            report_data.get('mode', 'all'),
+            report_data.get('report_content'),
+            recommendations_json,
+            market_context,
+        ))
+        return c.lastrowid
 
-    report_id = c.lastrowid
-    conn.commit()
-    conn.close()
-    return report_id
+    return execute_with_retry(operation, max_retries=5, base_delay=1.0)
 
 
 def get_recommendations(
@@ -3118,9 +3152,6 @@ def migrate_fund_positions_to_positions(user_id: int, portfolio_id: int) -> int:
 
 def upsert_stock_factors(factors: Dict) -> bool:
     """Insert or update stock factors for a given code and date."""
-    conn = get_db_connection()
-    c = conn.cursor()
-
     columns = [
         'code', 'trade_date', 'consolidation_score', 'volume_precursor', 'ma_convergence',
         'rsi', 'macd_signal', 'bollinger_position', 'roe', 'roe_yoy', 'gross_margin',
@@ -3132,19 +3163,19 @@ def upsert_stock_factors(factors: Dict) -> bool:
 
     placeholders = ', '.join(['?' for _ in columns])
     update_clause = ', '.join([f'{col} = excluded.{col}' for col in columns[2:]])
-
     values = [factors.get(col) for col in columns]
 
-    c.execute(f'''
-        INSERT INTO stock_factors_daily ({', '.join(columns)}, computed_at)
-        VALUES ({placeholders}, CURRENT_TIMESTAMP)
-        ON CONFLICT(code, trade_date) DO UPDATE SET
-        {update_clause}, computed_at = CURRENT_TIMESTAMP
-    ''', values)
+    def operation(conn):
+        c = conn.cursor()
+        c.execute(f'''
+            INSERT INTO stock_factors_daily ({', '.join(columns)}, computed_at)
+            VALUES ({placeholders}, CURRENT_TIMESTAMP)
+            ON CONFLICT(code, trade_date) DO UPDATE SET
+            {update_clause}, computed_at = CURRENT_TIMESTAMP
+        ''', values)
+        return True
 
-    conn.commit()
-    conn.close()
-    return True
+    return execute_with_retry(operation, max_retries=3, base_delay=0.2)
 
 
 def get_stock_factors(code: str, trade_date: str) -> Optional[Dict]:
@@ -3209,9 +3240,6 @@ def delete_old_stock_factors(days_to_keep: int = 30) -> int:
 
 def upsert_fund_factors(factors: Dict) -> bool:
     """Insert or update fund factors for a given code and date."""
-    conn = get_db_connection()
-    c = conn.cursor()
-
     columns = [
         'code', 'trade_date', 'return_1w', 'return_1m', 'return_3m', 'return_6m',
         'return_1y', 'return_rank_1w', 'return_rank_1m', 'volatility_20d',
@@ -3224,19 +3252,19 @@ def upsert_fund_factors(factors: Dict) -> bool:
 
     placeholders = ', '.join(['?' for _ in columns])
     update_clause = ', '.join([f'{col} = excluded.{col}' for col in columns[2:]])
-
     values = [factors.get(col) for col in columns]
 
-    c.execute(f'''
-        INSERT INTO fund_factors_daily ({', '.join(columns)}, computed_at)
-        VALUES ({placeholders}, CURRENT_TIMESTAMP)
-        ON CONFLICT(code, trade_date) DO UPDATE SET
-        {update_clause}, computed_at = CURRENT_TIMESTAMP
-    ''', values)
+    def operation(conn):
+        c = conn.cursor()
+        c.execute(f'''
+            INSERT INTO fund_factors_daily ({', '.join(columns)}, computed_at)
+            VALUES ({placeholders}, CURRENT_TIMESTAMP)
+            ON CONFLICT(code, trade_date) DO UPDATE SET
+            {update_clause}, computed_at = CURRENT_TIMESTAMP
+        ''', values)
+        return True
 
-    conn.commit()
-    conn.close()
-    return True
+    return execute_with_retry(operation, max_retries=3, base_delay=0.2)
 
 
 def get_fund_factors(code: str, trade_date: str) -> Optional[Dict]:
@@ -3300,29 +3328,26 @@ def delete_old_fund_factors(days_to_keep: int = 30) -> int:
 # =============================================================================
 
 def insert_recommendation_record(record: Dict) -> int:
-    """Insert a new recommendation performance tracking record."""
-    conn = get_db_connection()
-    c = conn.cursor()
+    """Insert or update a recommendation performance tracking record."""
+    def operation(conn):
+        c = conn.cursor()
+        c.execute('''
+            INSERT OR REPLACE INTO recommendation_performance (
+                code, rec_type, rec_date, rec_price, rec_score,
+                target_return_pct, stop_loss_pct, evaluation_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+        ''', (
+            record['code'],
+            record['rec_type'],
+            record['rec_date'],
+            record.get('rec_price'),
+            record.get('rec_score'),
+            record.get('target_return_pct', 5.0),
+            record.get('stop_loss_pct', -3.0)
+        ))
+        return c.lastrowid
 
-    c.execute('''
-        INSERT INTO recommendation_performance (
-            code, rec_type, rec_date, rec_price, rec_score,
-            target_return_pct, stop_loss_pct, evaluation_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
-    ''', (
-        record['code'],
-        record['rec_type'],
-        record['rec_date'],
-        record.get('rec_price'),
-        record.get('rec_score'),
-        record.get('target_return_pct', 5.0),
-        record.get('stop_loss_pct', -3.0)
-    ))
-
-    record_id = c.lastrowid
-    conn.commit()
-    conn.close()
-    return record_id
+    return execute_with_retry(operation, max_retries=3, base_delay=0.2)
 
 
 def update_recommendation_performance(record_id: int, updates: Dict) -> bool:

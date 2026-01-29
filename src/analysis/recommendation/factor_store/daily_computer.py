@@ -263,6 +263,9 @@ class DailyFactorComputer:
               f"Usage: {stats['current_calls']}/{stats['max_calls']} calls "
               f"({stats['utilization']:.1f}%)")
 
+        # Collect factors first, then persist in batches to reduce lock contention
+        computed_factors = []
+
         with ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as executor:
             futures = {
                 executor.submit(compute_func, code, trade_date): code
@@ -277,7 +280,7 @@ class DailyFactorComputer:
                     if factors:
                         factors['code'] = code.split('.')[0] if '.' in code else code
                         factors['trade_date'] = trade_date_db
-                        persist_func(factors)
+                        computed_factors.append(factors)
                         success += 1
                     else:
                         failure += 1
@@ -285,6 +288,13 @@ class DailyFactorComputer:
                 except Exception as e:
                     print(f"Batch processing error for {code}: {e}")
                     failure += 1
+
+        # Persist all factors after computation (serialized to avoid lock contention)
+        for factors in computed_factors:
+            try:
+                persist_func(factors)
+            except Exception as e:
+                print(f"Failed to persist factors for {factors.get('code')}: {e}")
 
         # Print rate limiter stats after batch
         stats = tushare_rate_limiter.get_stats()

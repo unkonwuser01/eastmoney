@@ -118,6 +118,10 @@ class StockRecommendationEngine:
         Returns:
             List of recommendation dicts sorted by score
         """
+        import time
+        start_time = time.time()
+        print(f"[StockEngine] get_recommendations started: strategy={strategy}, top_n={top_n}")
+
         if top_n is None:
             top_n = self.DEFAULT_TOP_N
 
@@ -130,14 +134,21 @@ class StockRecommendationEngine:
                 trade_date = format_date_yyyymmdd()
 
         trade_date_db = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
+        print(f"[StockEngine] Using trade_date_db={trade_date_db}")
 
         # Get top stocks from cache/database
+        cache_start = time.time()
         cached_factors = factor_cache.get_top_stocks(
             trade_date_db,
             score_type=strategy,
             limit=top_n * 2,  # Get more to filter
             min_score=min_score
         )
+        print(f"[StockEngine] Cache query took {time.time() - cache_start:.2f}s, found {len(cached_factors) if cached_factors else 0} stocks")
+
+        if not cached_factors:
+            print(f"[StockEngine] WARNING: No cached stock factors for {trade_date_db}. Please run factor computation task first.")
+            return []
 
         recommendations = []
 
@@ -181,6 +192,7 @@ class StockRecommendationEngine:
         # Sort by score
         recommendations.sort(key=lambda x: x['score'], reverse=True)
 
+        print(f"[StockEngine] get_recommendations completed in {time.time() - start_time:.2f}s, returning {len(recommendations)} stocks")
         return recommendations[:top_n]
 
     def get_single_recommendation(

@@ -60,6 +60,11 @@ class ShortTermStrategy:
             'risk': cls._compute_risk_score(factors),
         }
 
+        # Ensure all scores are in 0-100 range
+        for key in scores:
+            if scores[key] is not None:
+                scores[key] = max(0, min(100, scores[key]))
+
         # Weighted average
         total_score = sum(
             scores[key] * cls.WEIGHTS[key]
@@ -75,7 +80,9 @@ class ShortTermStrategy:
         )
 
         if weight_sum > 0:
-            return round(total_score / weight_sum * 100, 2)
+            # Final score should be 0-100, not multiplied by 100 again
+            final_score = total_score / weight_sum
+            return round(max(0, min(100, final_score)), 2)
 
         return 50.0
 
@@ -135,18 +142,21 @@ class ShortTermStrategy:
 
         trend = factors.get('main_inflow_trend')
         if trend is not None:
+            # Ensure trend is in 0-100 range
+            trend = max(0, min(100, trend))
             score += trend * 0.35
             weights += 0.35
 
         retail_outflow = factors.get('retail_outflow_ratio')
         if retail_outflow is not None:
             # Higher retail selling = potentially bullish
-            outflow_score = retail_outflow * 100
+            # retail_outflow is typically 0-1
+            outflow_score = max(0, min(100, retail_outflow * 100))
             score += outflow_score * 0.20
             weights += 0.20
 
         if weights > 0:
-            return score / weights
+            return max(0, min(100, score / weights))
 
         return 50.0
 

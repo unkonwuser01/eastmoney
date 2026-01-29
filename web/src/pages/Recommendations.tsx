@@ -46,10 +46,8 @@ import CloseIcon from '@mui/icons-material/Close';
 import LightbulbIcon from '@mui/icons-material/Lightbulb';
 import ScienceIcon from '@mui/icons-material/Science';
 import {
-    generateRecommendations,
     fetchLatestRecommendations,
     getUserPreferences,
-    pollRecommendationTask,
     generateRecommendationsV2,
     getFactorStatusV2,
 } from '../api';
@@ -58,7 +56,6 @@ import type {
     RecommendationResult,
     RecommendationStock,
     RecommendationFund,
-    TaskStatusResponse,
     RecommendationResultV2,
     RecommendationStockV2,
     RecommendationFundV2,
@@ -1747,7 +1744,7 @@ const StockDetailModalV2 = ({ open, onClose, stock, isShortTerm }: StockDetailMo
                                 <LightbulbIcon sx={{ fontSize: 14 }} /> {t('recommendations.detail.reason')}
                             </Typography>
                             <Typography sx={{ color: '#334155', fontSize: '0.85rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                                {stock.explanation}
+                                {safeRenderText(stock.explanation)}
                             </Typography>
                         </Box>
                     )}
@@ -1849,7 +1846,7 @@ const StockDetailModalV2 = ({ open, onClose, stock, isShortTerm }: StockDetailMo
                                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                                         {stock.catalysts.map((catalyst, i) => (
                                             <Typography key={i} sx={{ color: '#475569', fontSize: '0.8rem', pl: 1.5, position: 'relative', '&::before': { content: '"•"', position: 'absolute', left: 0, color: '#16a34a' } }}>
-                                                {catalyst}
+                                                {safeRenderText(catalyst)}
                                             </Typography>
                                         ))}
                                     </Box>
@@ -1861,7 +1858,7 @@ const StockDetailModalV2 = ({ open, onClose, stock, isShortTerm }: StockDetailMo
                                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                                         {stock.risks.map((risk, i) => (
                                             <Typography key={i} sx={{ color: '#475569', fontSize: '0.8rem', pl: 1.5, position: 'relative', '&::before': { content: '"•"', position: 'absolute', left: 0, color: '#dc2626' } }}>
-                                                {risk}
+                                                {safeRenderText(risk)}
                                             </Typography>
                                         ))}
                                     </Box>
@@ -1882,6 +1879,27 @@ const StockDetailModalV2 = ({ open, onClose, stock, isShortTerm }: StockDetailMo
             </DialogActions>
         </Dialog>
     );
+};
+
+// Helper function to safely render values that might be objects
+const safeRenderText = (value: unknown): string => {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number') return String(value);
+    if (typeof value === 'object') {
+        // Handle objects with specific keys like {code, logic}
+        const obj = value as Record<string, unknown>;
+        if ('logic' in obj) return String(obj.logic || '');
+        if ('text' in obj) return String(obj.text || '');
+        if ('content' in obj) return String(obj.content || '');
+        // Fallback: stringify the object
+        try {
+            return JSON.stringify(value);
+        } catch {
+            return String(value);
+        }
+    }
+    return String(value);
 };
 
 // --- V2 Fund Detail Modal Component ---
@@ -1945,7 +1963,7 @@ const FundDetailModalV2 = ({ open, onClose, fund, isShortTerm }: FundDetailModal
                                 <LightbulbIcon sx={{ fontSize: 14 }} /> {t('recommendations.detail.reason')}
                             </Typography>
                             <Typography sx={{ color: '#334155', fontSize: '0.85rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                                {fund.explanation}
+                                {safeRenderText(fund.explanation)}
                             </Typography>
                         </Box>
                     )}
@@ -2041,7 +2059,7 @@ const FundDetailModalV2 = ({ open, onClose, fund, isShortTerm }: FundDetailModal
                                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                                         {fund.catalysts.map((catalyst, i) => (
                                             <Typography key={i} sx={{ color: '#475569', fontSize: '0.8rem', pl: 1.5, position: 'relative', '&::before': { content: '"•"', position: 'absolute', left: 0, color: '#16a34a' } }}>
-                                                {catalyst}
+                                                {safeRenderText(catalyst)}
                                             </Typography>
                                         ))}
                                     </Box>
@@ -2053,7 +2071,7 @@ const FundDetailModalV2 = ({ open, onClose, fund, isShortTerm }: FundDetailModal
                                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                                         {fund.risks.map((risk, i) => (
                                             <Typography key={i} sx={{ color: '#475569', fontSize: '0.8rem', pl: 1.5, position: 'relative', '&::before': { content: '"•"', position: 'absolute', left: 0, color: '#dc2626' } }}>
-                                                {risk}
+                                                {safeRenderText(risk)}
                                             </Typography>
                                         ))}
                                     </Box>
@@ -2088,7 +2106,6 @@ export default function RecommendationsPage() {
     const [mode, setMode] = useState<'all' | 'short' | 'long'>('all');
     const [preferencesOpen, setPreferencesOpen] = useState(false);
     const [hasPreferences, setHasPreferences] = useState(false);
-    const [useV2Engine, setUseV2Engine] = useState(false);
     const [factorStatus, setFactorStatus] = useState<FactorStatus | null>(null);
     const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
         open: false,
@@ -2101,7 +2118,15 @@ export default function RecommendationsPage() {
             setLoading(true);
             const result = await fetchLatestRecommendations();
             if (result.available && result.data) {
-                setData(result.data);
+                // Check if it's V2 data (has engine_version field)
+                if ((result.data as any).engine_version === 'v2') {
+                    setDataV2(result.data as unknown as RecommendationResultV2);
+                    setData(null);
+                } else {
+                    // V1 data
+                    setData(result.data);
+                    setDataV2(null);
+                }
             }
         } catch (error) {
             console.error('Failed to load recommendations', error);
@@ -2134,46 +2159,18 @@ export default function RecommendationsPage() {
             setGeneratingProgress(t('recommendations.messages.generate_started'));
             setSnackbar({ open: true, message: t('recommendations.messages.generate_started'), severity: 'success' });
 
-            // Use V2 engine if enabled
-            if (useV2Engine) {
-                const result = await generateRecommendationsV2({
-                    mode,
-                    stock_limit: 20,
-                    fund_limit: 20,
-                    use_llm: true
-                });
-                setDataV2(result);
-                setSnackbar({ open: true, message: t('recommendations.messages.generate_success'), severity: 'success' });
-                setGenerating(false);
-                setGeneratingProgress('');
-                return;
-            }
-
-            // V1 engine
-            const response = await generateRecommendations({ mode, force_refresh: forceRefresh });
-
-            // If cached result returned immediately
-            if (response.status === 'completed' && response.result) {
-                setData(response.result);
-                setSnackbar({ open: true, message: t('recommendations.messages.generate_success'), severity: 'success' });
-                setGenerating(false);
-                setGeneratingProgress('');
-                return;
-            }
-
-            // If task started in background, poll for completion
-            if (response.status === 'started' && response.task_id) {
-                const result = await pollRecommendationTask(
-                    response.task_id,
-                    (status: TaskStatusResponse) => {
-                        setGeneratingProgress(status.progress || '');
-                    },
-                    5000,  // Poll every 5 seconds
-                    200    // Max 200 attempts (~10 minutes)
-                );
-                setData(result);
-                setSnackbar({ open: true, message: t('recommendations.messages.generate_success'), severity: 'success' });
-            }
+            // Always use V2 engine
+            const response = await generateRecommendationsV2({
+                mode,
+                stock_limit: 20,
+                fund_limit: 20,
+                use_llm: true
+            });
+            // API returns { status, result }, extract the actual result
+            const v2Result = (response as any).result || response;
+            setDataV2(v2Result);
+            setData(null);  // Clear V1 data
+            setSnackbar({ open: true, message: t('recommendations.messages.generate_success'), severity: 'success' });
         } catch (error) {
             console.error('Failed to generate recommendations', error);
             setSnackbar({ open: true, message: t('recommendations.messages.generate_error'), severity: 'error' });
@@ -2189,28 +2186,14 @@ export default function RecommendationsPage() {
         checkFactorStatus();
     }, []);
 
-    // Extract data based on mode and engine version
-    const shortTermData = data?.short_term;
-    const longTermData = data?.long_term;
-
-    // V1 data
-    const shortStocks = shortTermData?.short_term_stocks || shortTermData?.stocks || [];
-    const shortFunds = shortTermData?.short_term_funds || shortTermData?.funds || [];
-    const longStocks = longTermData?.long_term_stocks || longTermData?.stocks || [];
-    const longFunds = longTermData?.long_term_funds || longTermData?.funds || [];
-
-    // V2 data
+    // V2 data extraction
     const shortStocksV2 = dataV2?.short_term?.stocks || [];
     const shortFundsV2 = dataV2?.short_term?.funds || [];
     const longStocksV2 = dataV2?.long_term?.stocks || [];
     const longFundsV2 = dataV2?.long_term?.funds || [];
 
-    // Check if we have any data to display
-    const hasV2Data = dataV2 && (shortStocksV2.length > 0 || longStocksV2.length > 0);
-    const hasV1Data = data && (shortStocks.length > 0 || longStocks.length > 0);
-
-    // Determine which data to display based on engine and data availability
-    const displayV2 = useV2Engine && hasV2Data;
+    // Check if we have V2 data to display
+    const hasData = dataV2 && (shortStocksV2.length > 0 || longStocksV2.length > 0 || shortFundsV2.length > 0 || longFundsV2.length > 0);
 
     return (
         <Box className="flex flex-col gap-6 w-full h-full pb-10">
@@ -2231,34 +2214,23 @@ export default function RecommendationsPage() {
                 </Box>
 
                 <Box className="flex items-center gap-3">
-                    {/* V2 Engine Toggle */}
-                    <Tooltip title={
-                        useV2Engine
-                            ? t('recommendations.v2.engine_enabled_tip')
-                            : t('recommendations.v2.engine_disabled_tip')
-                    }>
-                        <Box
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer transition-all ${
-                                useV2Engine
-                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                                    : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
-                            }`}
-                            onClick={() => setUseV2Engine(!useV2Engine)}
-                        >
-                            <ScienceIcon fontSize="small" />
-                            <Typography variant="caption" className="font-semibold">
-                                {useV2Engine ? 'V2' : 'V1'}
-                            </Typography>
-                            {factorStatus?.stock_factors?.count && factorStatus.stock_factors.count > 0 && useV2Engine && (
+                    {/* Factor Status Badge */}
+                    {factorStatus?.stock_factors?.count && factorStatus.stock_factors.count > 0 && (
+                        <Tooltip title={t('recommendations.v2.engine_enabled_tip')}>
+                            <Box className="flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-emerald-50 border-emerald-200 text-emerald-700">
+                                <ScienceIcon fontSize="small" />
+                                <Typography variant="caption" className="font-semibold">
+                                    V2
+                                </Typography>
                                 <Badge
                                     badgeContent={factorStatus.stock_factors.count}
                                     color="success"
                                     max={9999}
                                     sx={{ '& .MuiBadge-badge': { fontSize: '0.6rem', height: 14, minWidth: 14 } }}
                                 />
-                            )}
-                        </Box>
-                    </Tooltip>
+                            </Box>
+                        </Tooltip>
+                    )}
 
                     {/* Preferences Button */}
                     <Tooltip title={hasPreferences ? t('recommendations.preferences.tooltip_configured') : t('recommendations.preferences.tooltip_not_configured')}>
@@ -2326,72 +2298,43 @@ export default function RecommendationsPage() {
             </Box>
 
             {/* Last Updated Info */}
-            {(data?.generated_at || dataV2?.generated_at) && (
+            {dataV2?.generated_at && (
                 <Box className="flex items-center gap-2 text-slate-500 flex-wrap">
                     <AccessTimeIcon className="text-sm" />
                     <Typography variant="caption">
-                        {t('recommendations.last_updated')}: {new Date((displayV2 ? dataV2?.generated_at : data?.generated_at) || '').toLocaleString()}
+                        {t('recommendations.last_updated')}: {new Date(dataV2.generated_at).toLocaleString()}
                     </Typography>
-                    {displayV2 && dataV2?.trade_date && (
+                    {dataV2.trade_date && (
                         <Chip
                             label={`${t('recommendations.v2.trade_date')}: ${dataV2.trade_date}`}
                             size="small"
                             className="h-5 text-[10px] bg-emerald-50 text-emerald-700 ml-2"
                         />
                     )}
-                    {displayV2 && dataV2?.metadata && (
+                    {dataV2.metadata && (
                         <Box className="flex gap-3 ml-4">
-                            <Chip
-                                label={`${t('recommendations.v2.factor_time')}: ${dataV2.metadata.factor_computation_time?.toFixed(1)}s`}
-                                size="small"
-                                className="h-5 text-[10px] bg-slate-100"
-                            />
-                            <Chip
-                                label={`${t('recommendations.metadata.total_time')}: ${dataV2.metadata.total_time?.toFixed(1)}s`}
-                                size="small"
-                                className="h-5 text-[10px] bg-emerald-100 text-emerald-700"
-                            />
+                            {dataV2.metadata.factor_computation_time && (
+                                <Chip
+                                    label={`${t('recommendations.v2.factor_time')}: ${dataV2.metadata.factor_computation_time.toFixed(1)}s`}
+                                    size="small"
+                                    className="h-5 text-[10px] bg-slate-100"
+                                />
+                            )}
+                            {dataV2.metadata.total_time && (
+                                <Chip
+                                    label={`${t('recommendations.metadata.total_time')}: ${dataV2.metadata.total_time.toFixed(1)}s`}
+                                    size="small"
+                                    className="h-5 text-[10px] bg-emerald-100 text-emerald-700"
+                                />
+                            )}
                         </Box>
                     )}
-                    {!displayV2 && data?.metadata && (
-                        <Box className="flex gap-3 ml-4">
-                            <Chip
-                                label={`${t('recommendations.metadata.screening_time')}: ${data.metadata.screening_time?.toFixed(1)}s`}
-                                size="small"
-                                className="h-5 text-[10px] bg-slate-100"
-                            />
-                            <Chip
-                                label={`${t('recommendations.metadata.llm_time')}: ${data.metadata.llm_time?.toFixed(1)}s`}
-                                size="small"
-                                className="h-5 text-[10px] bg-slate-100"
-                            />
-                            <Chip
-                                label={`${t('recommendations.metadata.total_time')}: ${data.metadata.total_time?.toFixed(1)}s`}
-                                size="small"
-                                className="h-5 text-[10px] bg-blue-100 text-blue-700"
-                            />
-                        </Box>
-                    )}
-                    {hasPreferences && !displayV2 && (
-                        <Chip
-                            icon={<TuneIcon className="text-[12px]" />}
-                            label={data?.personalized ? t('recommendations.preferences.personalized') : t('recommendations.preferences.preferences_set')}
-                            size="small"
-                            className={`h-5 text-[10px] ml-2 ${
-                                data?.personalized
-                                    ? 'bg-purple-100 text-purple-700'
-                                    : 'bg-slate-100 text-slate-600'
-                            }`}
-                        />
-                    )}
-                    {displayV2 && (
-                        <Chip
-                            icon={<ScienceIcon sx={{ fontSize: 12 }} />}
-                            label={t('recommendations.v2.quant_engine')}
-                            size="small"
-                            className="h-5 text-[10px] ml-2 bg-emerald-100 text-emerald-700"
-                        />
-                    )}
+                    <Chip
+                        icon={<ScienceIcon sx={{ fontSize: 12 }} />}
+                        label={t('recommendations.v2.quant_engine')}
+                        size="small"
+                        className="h-5 text-[10px] ml-2 bg-emerald-100 text-emerald-700"
+                    />
                 </Box>
             )}
 
@@ -2403,7 +2346,7 @@ export default function RecommendationsPage() {
             )}
 
             {/* No Data State */}
-            {!loading && !data && !dataV2 && (
+            {!loading && !dataV2 && (
                 <Paper elevation={0} className="border border-slate-200 rounded-xl bg-white p-12 text-center">
                     <AutoAwesomeIcon className="text-6xl text-slate-300 mb-4" />
                     <Typography variant="h6" className="text-slate-600 mb-2">
@@ -2424,10 +2367,10 @@ export default function RecommendationsPage() {
                 </Paper>
             )}
 
-            {/* V2 Recommendations Content */}
-            {!loading && displayV2 && dataV2 && (
+            {/* Recommendations Content */}
+            {!loading && dataV2 && (
                 <Box className="flex flex-col gap-6">
-                    {/* V2 Short-Term Section */}
+                    {/* Short-Term Section */}
                     {(mode === 'all' || mode === 'short') && dataV2.short_term && (
                         <RecommendationSectionV2
                             title={t('recommendations.short_term.title')}
@@ -2441,7 +2384,7 @@ export default function RecommendationsPage() {
                         />
                     )}
 
-                    {/* V2 Long-Term Section */}
+                    {/* Long-Term Section */}
                     {(mode === 'all' || mode === 'long') && dataV2.long_term && (
                         <RecommendationSectionV2
                             title={t('recommendations.long_term.title')}
@@ -2450,43 +2393,6 @@ export default function RecommendationsPage() {
                             stocks={longStocksV2}
                             funds={longFundsV2}
                             marketView={dataV2.long_term.macro_view}
-                            isShortTerm={false}
-                            defaultExpanded={mode !== 'all'}
-                        />
-                    )}
-                </Box>
-            )}
-
-            {/* V1 Recommendations Content */}
-            {!loading && !displayV2 && data && (
-                <Box className="flex flex-col gap-6">
-                    {/* Short-Term Section */}
-                    {(mode === 'all' || mode === 'short') && shortTermData && (
-                        <RecommendationSection
-                            title={t('recommendations.short_term.title')}
-                            subtitle={t('recommendations.short_term.subtitle')}
-                            icon={<TrendingUpIcon className="text-blue-600" />}
-                            stocks={shortStocks}
-                            funds={shortFunds}
-                            marketView={shortTermData.market_view}
-                            sectorPreference={shortTermData.sector_preference}
-                            riskWarning={shortTermData.risk_warning}
-                            isShortTerm={true}
-                            defaultExpanded={true}
-                        />
-                    )}
-
-                    {/* Long-Term Section */}
-                    {(mode === 'all' || mode === 'long') && longTermData && (
-                        <RecommendationSection
-                            title={t('recommendations.long_term.title')}
-                            subtitle={t('recommendations.long_term.subtitle')}
-                            icon={<CalendarMonthIcon className="text-purple-600" />}
-                            stocks={longStocks}
-                            funds={longFunds}
-                            marketView={longTermData.macro_view}
-                            sectorPreference={longTermData.sector_preference}
-                            riskWarning={longTermData.risk_warning}
                             isShortTerm={false}
                             defaultExpanded={mode !== 'all'}
                         />

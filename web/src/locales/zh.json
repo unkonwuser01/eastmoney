@@ -806,7 +806,48 @@
       "fail": "保存配置失败"
     },
     "language": "语言",
-    "theme": "主题"
+    "theme": "主题",
+    "notifications": {
+      "title": "邮件推送",
+      "subtitle": "配置邮件通知服务，在重要事件发生时接收推送。",
+      "enabled": "已启用",
+      "disabled": "已禁用",
+      "smtp": {
+        "title": "邮件服务器配置",
+        "host": "SMTP 服务器",
+        "host_help": "如 smtp.gmail.com, smtp.qq.com",
+        "port": "端口",
+        "user": "用户名",
+        "password": "密码",
+        "password_placeholder": "输入 SMTP 密码...",
+        "from_email": "发件人邮箱",
+        "from_help": "留空则使用用户名"
+      },
+      "recipient": "收件人邮箱",
+      "recipient_help": "接收通知的邮箱地址",
+      "triggers": {
+        "title": "推送触发条件",
+        "on_report": "报告生成时推送",
+        "on_alert": "风险预警时推送",
+        "daily_summary": "每日摘要推送"
+      },
+      "timing": {
+        "title": "时间设置",
+        "quiet_hours": "启用免打扰",
+        "quiet_start": "免打扰开始",
+        "quiet_end": "免打扰结束",
+        "summary_time": "摘要发送时间",
+        "summary_help": "每日摘要的发送时间"
+      },
+      "test_button": "发送测试邮件",
+      "save_button": "保存推送设置",
+      "test_success": "测试邮件发送成功",
+      "test_fail": "测试邮件发送失败",
+      "messages": {
+        "success": "推送设置保存成功",
+        "fail": "推送设置保存失败"
+      }
+    }
   },
   "recommendations": {
     "title": "AI 智能推荐",

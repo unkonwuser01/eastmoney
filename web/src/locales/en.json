@@ -807,7 +807,48 @@
       "fail": "Failed to save configuration"
     },
     "language": "Language",
-    "theme": "Theme"
+    "theme": "Theme",
+    "notifications": {
+      "title": "Email Notifications",
+      "subtitle": "Configure email notification service to receive alerts for important events.",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "smtp": {
+        "title": "Mail Server Configuration",
+        "host": "SMTP Server",
+        "host_help": "e.g. smtp.gmail.com, smtp.office365.com",
+        "port": "Port",
+        "user": "Username",
+        "password": "Password",
+        "password_placeholder": "Enter SMTP password...",
+        "from_email": "From Email",
+        "from_help": "Leave empty to use username"
+      },
+      "recipient": "Recipient Email",
+      "recipient_help": "Email address to receive notifications",
+      "triggers": {
+        "title": "Notification Triggers",
+        "on_report": "Notify on report generation",
+        "on_alert": "Notify on risk alerts",
+        "daily_summary": "Daily summary email"
+      },
+      "timing": {
+        "title": "Timing Settings",
+        "quiet_hours": "Enable quiet hours",
+        "quiet_start": "Quiet start",
+        "quiet_end": "Quiet end",
+        "summary_time": "Summary time",
+        "summary_help": "Time to send daily summary"
+      },
+      "test_button": "Send Test Email",
+      "save_button": "Save Notification Settings",
+      "test_success": "Test email sent successfully",
+      "test_fail": "Failed to send test email",
+      "messages": {
+        "success": "Notification settings saved successfully",
+        "fail": "Failed to save notification settings"
+      }
+    }
   },
   "recommendations": {
     "title": "AI Recommendations",

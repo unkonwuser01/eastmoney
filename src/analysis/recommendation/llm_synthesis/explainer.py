@@ -7,8 +7,9 @@ Key principles:
 - Batch process 10 stocks/funds per call
 - Focus on investment logic, catalysts, and risks
 """
-from typing import Dict, List, Optional
+from typing import Dict, List
 import json
+import time
 
 from src.llm.client import get_llm_client
 
@@ -26,7 +27,7 @@ class RecommendationExplainer:
     MAX_CALLS_PER_CYCLE = 2
 
     @classmethod
-    async def explain_stock_recommendations(
+    def explain_stock_recommendations(
         cls,
         recommendations: List[Dict],
         strategy: str = 'short_term'
@@ -56,7 +57,7 @@ class RecommendationExplainer:
         explained_recs = []
 
         for batch in batches:
-            explanations = await cls._generate_stock_explanations(batch, strategy)
+            explanations = cls._generate_stock_explanations(batch, strategy)
 
             for rec, explanation in zip(batch, explanations):
                 rec['explanation'] = explanation
@@ -71,7 +72,7 @@ class RecommendationExplainer:
         return explained_recs
 
     @classmethod
-    async def explain_fund_recommendations(
+    def explain_fund_recommendations(
         cls,
         recommendations: List[Dict],
         strategy: str = 'short_term'
@@ -99,7 +100,7 @@ class RecommendationExplainer:
         explained_recs = []
 
         for batch in batches:
-            explanations = await cls._generate_fund_explanations(batch, strategy)
+            explanations = cls._generate_fund_explanations(batch, strategy)
 
             for rec, explanation in zip(batch, explanations):
                 rec['explanation'] = explanation
@@ -113,7 +114,7 @@ class RecommendationExplainer:
         return explained_recs
 
     @classmethod
-    async def _generate_stock_explanations(
+    def _generate_stock_explanations(
         cls,
         recommendations: List[Dict],
         strategy: str
@@ -127,7 +128,7 @@ class RecommendationExplainer:
 
         try:
             client = get_llm_client()
-            response = await client.generate_async(prompt)
+            response = client.generate_content(prompt)
 
             # Parse response into list
             explanations = cls._parse_explanations(response, len(recommendations))
@@ -135,11 +136,11 @@ class RecommendationExplainer:
             return explanations
 
         except Exception as e:
-            print(f"LLM explanation failed: {e}")
+            print(f"[LLM Explainer] Stock explanation failed: {e}")
             return [cls._generate_fallback_explanation(rec, strategy) for rec in recommendations]
 
     @classmethod
-    async def _generate_fund_explanations(
+    def _generate_fund_explanations(
         cls,
         recommendations: List[Dict],
         strategy: str
@@ -153,14 +154,14 @@ class RecommendationExplainer:
 
         try:
             client = get_llm_client()
-            response = await client.generate_async(prompt)
+            response = client.generate_content(prompt)
 
             explanations = cls._parse_explanations(response, len(recommendations))
 
             return explanations
 
         except Exception as e:
-            print(f"LLM explanation failed: {e}")
+            print(f"[LLM Explainer] Fund explanation failed: {e}")
             return [cls._generate_fallback_explanation(rec, strategy) for rec in recommendations]
 
     @classmethod
@@ -337,18 +338,35 @@ class RecommendationExplainer:
             return f"推荐等级：{confidence}，综合得分{score:.0f}分。建议{holding}持有，请结合市场情况决策。"
 
 
-# Synchronous wrapper for non-async contexts
+# Synchronous wrapper for engine calls
 def explain_recommendations_sync(
     recommendations: List[Dict],
     asset_type: str = 'stock',
     strategy: str = 'short_term'
 ) -> List[Dict]:
     """
-    Synchronous wrapper for explanation generation.
+    Synchronous function for explanation generation.
 
-    Falls back to rule-based explanations if async context unavailable.
+    Uses LLM for explanations, falls back to rule-based if LLM fails.
     """
-    for rec in recommendations:
-        rec['explanation'] = RecommendationExplainer._generate_fallback_explanation(rec, strategy)
+    if not recommendations:
+        return recommendations
 
-    return recommendations
+    start_time = time.time()
+    print(f"[LLM Explainer] Starting {asset_type} {strategy} explanations for {len(recommendations)} items...")
+
+    try:
+        if asset_type == 'stock':
+            result = RecommendationExplainer.explain_stock_recommendations(recommendations, strategy)
+        else:
+            result = RecommendationExplainer.explain_fund_recommendations(recommendations, strategy)
+
+        print(f"[LLM Explainer] Explanations completed in {time.time() - start_time:.2f}s")
+        return result
+
+    except Exception as e:
+        print(f"[LLM Explainer] Failed: {e}, using fallback explanations")
+        # Fallback to rule-based explanations
+        for rec in recommendations:
+            rec['explanation'] = RecommendationExplainer._generate_fallback_explanation(rec, strategy)
+        return recommendations

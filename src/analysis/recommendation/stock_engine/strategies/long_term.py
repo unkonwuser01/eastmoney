@@ -63,6 +63,11 @@ class LongTermStrategy:
             'moat': cls._compute_moat_score(factors),
         }
 
+        # Ensure all scores are in 0-100 range
+        for key in scores:
+            if scores[key] is not None:
+                scores[key] = max(0, min(100, scores[key]))
+
         # Weighted average
         total_score = sum(
             scores[key] * cls.WEIGHTS[key]
@@ -77,7 +82,9 @@ class LongTermStrategy:
         )
 
         if weight_sum > 0:
-            return round(total_score / weight_sum * 100, 2)
+            # Final score should be 0-100, not multiplied by 100 again
+            final_score = total_score / weight_sum
+            return round(max(0, min(100, final_score)), 2)
 
         return 50.0
 
