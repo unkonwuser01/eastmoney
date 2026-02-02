@@ -48,8 +48,7 @@ RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua
 # 复制后端代码
 COPY src/ ./src/
 COPY config/ ./config/
-COPY api_server.py .
-COPY main.py .
+COPY app/ ./app/
 
 # 从前端构建阶段复制构建好的静态文件
 COPY --from=frontend-builder /app/web/dist ./static
@@ -64,5 +63,5 @@ EXPOSE 9000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:9000/api/health || exit 1
 
-# 启动命令
-CMD ["python", "api_server.py", "--port", "9000"]
+# 启动命令 - 使用 uvicorn 启动 app/main.py
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9000"]
