@@ -14,6 +14,8 @@ class FundItem(BaseModel):
     pre_market_time: Optional[str] = None
     post_market_time: Optional[str] = None
     is_active: bool = True
+    is_etf_linkage: Optional[bool] = False  # 是否为ETF联接基金
+    etf_code: Optional[str] = None  # 关联的ETF代码
 
 
 class FundCompareRequest(BaseModel):

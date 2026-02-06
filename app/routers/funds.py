@@ -69,9 +69,146 @@ async def upsert_fund_endpoint(code: str, fund: FundItem, current_user: User = D
     """Create or update a fund."""
     try:
         fund_dict = fund.model_dump()
+        
+        # 自动检测ETF联接基金
+        from app.core.etf_linkage_detector import detect_etf_linkage
+        
+        # 如果前端没有提供ETF信息，自动检测
+        if not fund_dict.get('is_etf_linkage') and not fund_dict.get('etf_code'):
+            detection_result = detect_etf_linkage(fund_dict['code'], fund_dict['name'])
+            fund_dict['is_etf_linkage'] = detection_result['is_etf_linkage']
+            fund_dict['etf_code'] = detection_result['etf_code']
+            print(f"[Fund API] Auto-detected ETF linkage: {fund_dict['code']} -> is_etf_linkage={detection_result['is_etf_linkage']}, etf_code={detection_result['etf_code']}")
+        
         upsert_fund(fund_dict, user_id=current_user.id)
         scheduler_manager.add_fund_jobs(fund_dict)
-        return {"status": "success"}
+        
+        # 返回更新后的基金信息（包含ETF信息）
+        return {
+            "status": "success",
+            "fund": fund_dict
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/migrate-etf-linkage")
+async def migrate_etf_linkage_data(current_user: User = Depends(get_current_user)):
+    """
+    迁移已有基金数据，自动检测ETF联接基金
+    仅管理员可用
+    """
+    try:
+        from app.core.etf_linkage_detector import detect_etf_linkage
+        
+        # 获取当前用户的所有基金
+        all_funds = get_all_funds(user_id=current_user.id)
+        
+        if not all_funds:
+            return {
+                "status": "success",
+                "message": "未找到任何基金数据",
+                "total": 0,
+                "updated": 0,
+                "etf_linkage_count": 0,
+            }
+        
+        updated_count = 0
+        etf_linkage_count = 0
+        details = []
+        
+        for fund in all_funds:
+            code = fund['code']
+            name = fund['name']
+            
+            # 检查是否已经有ETF信息
+            if fund.get('is_etf_linkage') or fund.get('etf_code'):
+                details.append({
+                    "code": code,
+                    "name": name,
+                    "status": "skipped",
+                    "reason": "已有ETF信息"
+                })
+                continue
+            
+            # 自动检测
+            detection_result = detect_etf_linkage(code, name)
+            
+            if detection_result['is_etf_linkage']:
+                etf_linkage_count += 1
+                
+                # 更新数据库
+                fund_dict = dict(fund)
+                fund_dict['is_etf_linkage'] = True
+                fund_dict['etf_code'] = detection_result['etf_code']
+                
+                try:
+                    upsert_fund(fund_dict, user_id=current_user.id)
+                    updated_count += 1
+                    details.append({
+                        "code": code,
+                        "name": name,
+                        "status": "updated",
+                        "etf_code": detection_result['etf_code']
+                    })
+                except Exception as e:
+                    details.append({
+                        "code": code,
+                        "name": name,
+                        "status": "error",
+                        "error": str(e)
+                    })
+            else:
+                details.append({
+                    "code": code,
+                    "name": name,
+                    "status": "not_etf_linkage"
+                })
+        
+        return {
+            "status": "success",
+            "message": "迁移完成",
+            "total": len(all_funds),
+            "updated": updated_count,
+            "etf_linkage_count": etf_linkage_count,
+            "details": details,
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{code}/etf-info")
+async def get_fund_etf_info(code: str, current_user: User = Depends(get_current_user)):
+    """
+    获取基金的ETF联接信息（用于诊断）
+    """
+    try:
+        from app.core.etf_linkage_detector import detect_etf_linkage
+        
+        # 从数据库获取基金信息
+        fund = get_fund_by_code(code, user_id=current_user.id)
+        
+        if not fund:
+            raise HTTPException(status_code=404, detail=f"Fund {code} not found")
+        
+        # 自动检测
+        detection_result = detect_etf_linkage(code, fund['name'])
+        
+        return {
+            'code': code,
+            'name': fund['name'],
+            'db_is_etf_linkage': fund.get('is_etf_linkage'),
+            'db_etf_code': fund.get('etf_code'),
+            'detected_is_etf_linkage': detection_result['is_etf_linkage'],
+            'detected_etf_code': detection_result['etf_code'],
+            'detection_method': detection_result.get('method', 'unknown'),
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -393,6 +530,10 @@ async def get_batch_fund_estimation(
 ):
     """
     Get batch intraday fund NAV estimation for multiple funds.
+    使用自研估值计算系统：
+    1. ETF联接基金 -> 通过ETF实时价格计算
+    2. 主动型基金 -> 通过持仓信息计算
+    3. 其他基金 -> 尝试从东方财富网获取
     
     Args:
         codes: Comma-separated fund codes (e.g., "000001,000002,000003")
@@ -407,10 +548,14 @@ async def get_batch_fund_estimation(
         # Get fund codes to query
         if codes:
             code_list = [c.strip() for c in codes.split(',') if c.strip()]
+            # 获取这些基金的ETF信息
+            user_funds = get_all_funds(user_id=current_user.id)
+            fund_etf_map = {f['code']: f.get('etf_code') for f in user_funds if f['code'] in code_list}
         else:
             # Get all user's funds
             user_funds = get_all_funds(user_id=current_user.id)
             code_list = [f['code'] for f in user_funds]
+            fund_etf_map = {f['code']: f.get('etf_code') for f in user_funds}
         
         if not code_list:
             return {
@@ -419,26 +564,47 @@ async def get_batch_fund_estimation(
                 'timestamp': datetime.now().isoformat(),
             }
         
-        # Fetch all estimations (cached)
+        # 优先尝试从东方财富网获取估值（兼容旧数据）
         all_estimations = await loop.run_in_executor(None, _fetch_all_estimations)
+        
+        # 导入自研估值计算模块
+        from app.core.fund_estimation import calculate_fund_estimation
         
         # Filter for requested codes
         result = []
         for code in code_list:
             if code in all_estimations:
+                # 东方财富网有数据，直接使用
                 result.append(all_estimations[code])
             else:
-                # Fund not found in estimation data (may be ETF or money market fund)
-                result.append({
-                    'code': code,
-                    'name': None,
-                    'estimated_nav': None,
-                    'estimated_change_pct': None,
-                    'prev_nav': None,
-                    'prev_nav_date': None,
-                    'estimation_time': None,
-                    'not_available': True,
-                })
+                # 东方财富网没有数据，使用自研计算
+                print(f"[Estimation] Using custom calculation for {code}")
+                try:
+                    # 传递ETF代码（如果有）
+                    etf_code = fund_etf_map.get(code)
+                    estimation = await loop.run_in_executor(None, calculate_fund_estimation, code, etf_code)
+                    if estimation:
+                        result.append(estimation)
+                    else:
+                        # 无法计算
+                        result.append({
+                            'code': code,
+                            'name': None,
+                            'estimated_nav': None,
+                            'estimated_change_pct': None,
+                            'prev_nav': None,
+                            'prev_nav_date': None,
+                            'estimation_time': None,
+                            'not_available': True,
+                            'reason': 'Unable to calculate estimation',
+                        })
+                except Exception as e:
+                    print(f"[Estimation] Error calculating {code}: {e}")
+                    result.append({
+                        'code': code,
+                        'not_available': True,
+                        'reason': str(e),
+                    })
         
         return {
             'estimations': result,

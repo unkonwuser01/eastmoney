@@ -262,8 +262,23 @@ export default function FundsPage() {
     };
 
     try {
-        await saveFund(updatedFund);
-        showNotify(t('funds.messages.save_success'), 'success');
+        const response = await saveFund(updatedFund);
+        
+        // 检查后端是否返回了ETF联接信息
+        if (response && response.fund) {
+            const { is_etf_linkage, etf_code } = response.fund;
+            if (is_etf_linkage) {
+                showNotify(
+                    `基金已保存！检测到ETF联接基金，关联ETF代码: ${etf_code || '未知'}`, 
+                    'success'
+                );
+            } else {
+                showNotify(t('funds.messages.save_success'), 'success');
+            }
+        } else {
+            showNotify(t('funds.messages.save_success'), 'success');
+        }
+        
         setOpenDialog(false);
         loadFunds();
     } catch (error) {
@@ -657,8 +672,24 @@ export default function FundsPage() {
                       <Box sx={{ p: 1, bgcolor: '#f1f5f9', borderRadius: '10px', color: '#6366f1' }}>    
                         <AccountBalanceWalletIcon fontSize="small" />
                       </Box>
-                      <Box>
-                        <Typography sx={{ fontWeight: 800, color: '#1e293b', fontSize: '0.9rem' }}>{fund.name}</Typography>
+                      <Box sx={{ flex: 1 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                          <Typography sx={{ fontWeight: 800, color: '#1e293b', fontSize: '0.9rem' }}>{fund.name}</Typography>
+                          {fund.is_etf_linkage && (
+                            <Chip 
+                              label={fund.etf_code ? `ETF联接 → ${fund.etf_code}` : 'ETF联接'} 
+                              size="small" 
+                              sx={{ 
+                                fontSize: '0.6rem', 
+                                height: '18px', 
+                                bgcolor: 'rgba(139, 92, 246, 0.1)', 
+                                color: '#8b5cf6', 
+                                fontWeight: 800,
+                                border: '1px solid rgba(139, 92, 246, 0.3)',
+                              }} 
+                            />
+                          )}
+                        </Box>
                         <Typography sx={{ color: '#94a3b8', fontFamily: 'JetBrains Mono', fontSize: '0.75rem' }}>{fund.code}</Typography>
                       </Box>
                     </Box>

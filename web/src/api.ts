@@ -112,6 +112,8 @@ export interface FundItem {
   pre_market_time?: string; // HH:MM
   post_market_time?: string; // HH:MM
   is_active?: boolean;
+  is_etf_linkage?: boolean; // 是否为ETF联接基金
+  etf_code?: string; // 关联的ETF代码
 }
 
 export interface SettingsData {
@@ -174,8 +176,9 @@ export const fetchFunds = async (): Promise<FundItem[]> => {
   return response.data;
 };
 
-export const saveFund = async (fund: FundItem): Promise<void> => {
-  await api.put(`/funds/${fund.code}`, fund);
+export const saveFund = async (fund: FundItem): Promise<{ status: string; fund?: FundItem }> => {
+  const response = await api.put(`/funds/${fund.code}`, fund);
+  return response.data;
 };
 
 export const deleteFund = async (code: string): Promise<void> => {

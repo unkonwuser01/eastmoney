@@ -14,6 +14,7 @@ from src.data_sources.data_source_manager import get_fund_info_from_tushare
 def get_fund_nav_history(fund_code: str, days: int = 100) -> List[Dict]:
     """
     Get fund NAV (Net Asset Value) history.
+    优先使用 TuShare，失败时降级到 AkShare。
 
     Args:
         fund_code: The fund code
@@ -23,33 +24,69 @@ def get_fund_nav_history(fund_code: str, days: int = 100) -> List[Dict]:
         List of dicts with 'date' and 'value' keys
     """
     try:
-        # Use TuShare via data_source_manager
+        # 方法1: 优先尝试 TuShare（如果配置了）
         df = get_fund_info_from_tushare(fund_code)
         
-        if df is None or df.empty:
-            return []
+        if df is not None and not df.empty:
+            # Data from data_source_manager already has standard columns:
+            # '净值日期' (YYYYMMDD string), '单位净值' (float)
 
-        # Data from data_source_manager already has standard columns:
-        # '净值日期' (YYYYMMDD string), '单位净值' (float)
+            if '净值日期' in df.columns and '单位净值' in df.columns:
+                df['净值日期'] = pd.to_datetime(df['净值日期'], errors='coerce')
+                df = df.dropna(subset=['净值日期', '单位净值'])
+                
+                # Sort by date ascending to get chronological order
+                df = df.sort_values('净值日期')
+                
+                # Take the last 'days' entries
+                df = df.tail(days)
 
-        if '净值日期' not in df.columns or '单位净值' not in df.columns:
-            return []
-
-        df['净值日期'] = pd.to_datetime(df['净值日期'], errors='coerce')
-        df = df.dropna(subset=['净值日期', '单位净值'])
+                result = [
+                    {'date': row['净值日期'].strftime('%Y-%m-%d'), 'value': float(row['单位净值'])}
+                    for _, row in df.iterrows()
+                ]
+                
+                if result:
+                    print(f"[NAV] Got {len(result)} records from TuShare for {fund_code}")
+                    return result
         
-        # Sort by date ascending to get chronological order
-        df = df.sort_values('净值日期')
+        # 方法2: 降级到 AkShare（东方财富网）
+        print(f"[NAV] TuShare failed or not configured, trying AkShare for {fund_code}")
         
-        # Take the last 'days' entries
-        df = df.tail(days)
-
-        return [
-            {'date': row['净值日期'].strftime('%Y-%m-%d'), 'value': float(row['单位净值'])}
-            for _, row in df.iterrows()
-        ]
+        try:
+            # 使用 AkShare 的基金净值走势接口
+            df_ak = ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
+            
+            if df_ak is not None and not df_ak.empty:
+                # AkShare 返回的列名：净值日期, 单位净值, 日增长率
+                if '净值日期' in df_ak.columns and '单位净值' in df_ak.columns:
+                    df_ak['净值日期'] = pd.to_datetime(df_ak['净值日期'], errors='coerce')
+                    df_ak = df_ak.dropna(subset=['净值日期', '单位净值'])
+                    
+                    # Sort by date ascending
+                    df_ak = df_ak.sort_values('净值日期')
+                    
+                    # Take the last 'days' entries
+                    df_ak = df_ak.tail(days)
+                    
+                    result = [
+                        {'date': row['净值日期'].strftime('%Y-%m-%d'), 'value': float(row['单位净值'])}
+                        for _, row in df_ak.iterrows()
+                    ]
+                    
+                    if result:
+                        print(f"[NAV] Got {len(result)} records from AkShare for {fund_code}")
+                        return result
+        except Exception as e:
+            print(f"[NAV] AkShare also failed for {fund_code}: {e}")
+        
+        print(f"[NAV] All methods failed for {fund_code}")
+        return []
+        
     except Exception as e:
         print(f"Error fetching NAV history for {fund_code}: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 

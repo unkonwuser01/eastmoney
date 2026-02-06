@@ -6,7 +6,8 @@ services:
       dockerfile: Dockerfile
     container_name: eastmoney-app
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "9000:9000"
     volumes:
       - ./data:/app/data
       - ./reports:/app/reports
@@ -15,6 +16,16 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - DB_FILE_PATH=/app/data/funds.db
+      # 代理池配置 - 已禁用
+      - PROXY_POOL_ENABLED=false
+      - PROXY_POOL_HOST=host.docker.internal
+      - PROXY_POOL_HTTP_PORT=17285
+      - PROXY_POOL_SOCKS5_PORT=17283
+    dns:
+      - 8.8.8.8
+      - 114.114.114.114
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/api/health"]
       interval: 30s

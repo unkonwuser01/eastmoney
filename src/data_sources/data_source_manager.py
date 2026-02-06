@@ -338,6 +338,7 @@ def _get_market_indices_dict_from_tushare() -> Dict:
 def get_fund_info_from_tushare(fund_code: str) -> pd.DataFrame:
     """
     Get fund NAV (net asset value) history from TuShare.
+    如果未配置 TUSHARE_API_TOKEN，直接返回空 DataFrame。
 
     Args:
         fund_code: Fund code (6 digits)
@@ -346,6 +347,12 @@ def get_fund_info_from_tushare(fund_code: str) -> pd.DataFrame:
         DataFrame with NAV history
     """
     try:
+        # 检查 TuShare 是否可用
+        pro = _get_tushare_pro()
+        if pro is None:
+            print(f"[TuShare] TUSHARE_API_TOKEN not configured, skipping TuShare for {fund_code}")
+            return pd.DataFrame()
+        
         # TuShare fund codes need suffix.
         # If 6 digits, assume .OF (Open Fund) as default for funds.
         # Some ETFs might use .SH/.SZ, but this function is often used for open funds.

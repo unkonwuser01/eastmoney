@@ -568,6 +568,17 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Migration: Add ETF linkage columns to funds if not exists
+    try:
+        c.execute('ALTER TABLE funds ADD COLUMN is_etf_linkage BOOLEAN DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute('ALTER TABLE funds ADD COLUMN etf_code TEXT')
+    except sqlite3.OperationalError:
+        pass
+
     # Migration: Add scheduling columns to stocks if not exists
     for col, default in [('pre_market_time', "'08:30'"), ('post_market_time', "'15:30'"), ('is_active', '1')]:
         try:
@@ -715,7 +726,8 @@ def upsert_fund(fund_data: Dict, user_id: int):
     if exists:
         c.execute('''
             UPDATE funds 
-            SET name=?, style=?, focus=?, pre_market_time=?, post_market_time=?, is_active=?
+            SET name=?, style=?, focus=?, pre_market_time=?, post_market_time=?, is_active=?, 
+                is_etf_linkage=?, etf_code=?
             WHERE code=? AND user_id=?
         ''', (
             fund_data['name'],
@@ -724,13 +736,16 @@ def upsert_fund(fund_data: Dict, user_id: int):
             fund_data.get('pre_market_time'),
             fund_data.get('post_market_time'),
             fund_data.get('is_active', 1),
+            fund_data.get('is_etf_linkage', 0),
+            fund_data.get('etf_code'),
             fund_data['code'],
             user_id
         ))
     else:
         c.execute('''
-            INSERT INTO funds (code, name, style, focus, pre_market_time, post_market_time, is_active, user_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO funds (code, name, style, focus, pre_market_time, post_market_time, is_active, 
+                             user_id, is_etf_linkage, etf_code)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             fund_data['code'],
             fund_data['name'],
@@ -739,7 +754,9 @@ def upsert_fund(fund_data: Dict, user_id: int):
             fund_data.get('pre_market_time'),
             fund_data.get('post_market_time'),
             fund_data.get('is_active', 1),
-            user_id
+            user_id,
+            fund_data.get('is_etf_linkage', 0),
+            fund_data.get('etf_code')
         ))
     
     conn.commit()
