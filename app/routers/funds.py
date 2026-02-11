@@ -974,51 +974,220 @@ async def get_fund_manager_detail(
 
 # ==================== Market Overview Endpoints ====================
 
+# 市场指数缓存
+_indices_cache_lock = threading.Lock()
+_indices_cache_data = []
+_indices_cache_timestamp = 0.0
+
+# 北向资金缓存（用于保存最后一次有效数据）
+_northbound_cache_lock = threading.Lock()
+_northbound_cache_data = None  # 最后一次有效的北向资金数据
+_northbound_cache_date = None  # 最后一次有效数据的日期
+
 @router.get("/market/indices")
 async def get_market_indices(current_user: User = Depends(get_current_user)):
     """
     Get major market indices (上证、深证、创业板、科创50等).
+    使用 AkShare 作为主要数据源（数据完整），新浪财经作为备用。
     """
+    global _indices_cache_data, _indices_cache_timestamp
+    
+    now = time.time()
+    cache_ttl = 60  # 60秒缓存
+    
+    # 检查缓存是否有效
+    with _indices_cache_lock:
+        if _indices_cache_data and (now - _indices_cache_timestamp) < cache_ttl:
+            print(f"[Indices] 返回缓存数据 (缓存时间: {int(now - _indices_cache_timestamp)}秒前)")
+            return {
+                'indices': _indices_cache_data,
+                'timestamp': datetime.now().isoformat(),
+                'cached': True
+            }
+    
+    # 缓存过期，尝试获取新数据
+    # 方法1: 尝试 AkShare（数据完整，包含成交额、振幅等）
     try:
+        print("[Indices] 尝试 AkShare API...")
         loop = asyncio.get_running_loop()
-        df = await loop.run_in_executor(None, ak.stock_zh_index_spot_em)
         
-        if df is None or df.empty:
-            return {'indices': [], 'timestamp': datetime.now().isoformat()}
+        # 增加超时时间到 30 秒，并添加重试机制
+        max_retries = 2
+        for retry in range(max_retries):
+            try:
+                df = await asyncio.wait_for(
+                    loop.run_in_executor(None, ak.stock_zh_index_spot_em),
+                    timeout=30.0  # 从 10 秒增加到 30 秒
+                )
+                break  # 成功则跳出重试循环
+            except asyncio.TimeoutError:
+                if retry < max_retries - 1:
+                    print(f"[Indices] AkShare 超时，重试 {retry + 1}/{max_retries - 1}...")
+                    await asyncio.sleep(1)  # 等待 1 秒后重试
+                else:
+                    raise  # 最后一次重试失败则抛出异常
         
-        # Filter for major indices
-        major_codes = ['000001', '399001', '399006', '000688', '000300', '000016', '000905']
-        indices = []
-        
-        for _, row in df.iterrows():
-            code = _safe_str(row.get('代码'))
-            if code in major_codes:
-                indices.append({
-                    'code': code,
-                    'name': _safe_str(row.get('名称')),
-                    'price': _safe_float(row.get('最新价')),
-                    'change_pct': _safe_float(row.get('涨跌幅')),
-                    'change_val': _safe_float(row.get('涨跌额')),
-                    'volume': _safe_float(row.get('成交量')),
-                    'amount': _safe_float(row.get('成交额')),
-                    'high': _safe_float(row.get('最高')),
-                    'low': _safe_float(row.get('最低')),
-                    'open': _safe_float(row.get('今开')),
-                    'prev_close': _safe_float(row.get('昨收')),
-                })
-        
-        # Sort by predefined order
-        order = {c: i for i, c in enumerate(major_codes)}
-        indices.sort(key=lambda x: order.get(x['code'], 999))
-        
-        return {
-            'indices': indices,
-            'timestamp': datetime.now().isoformat(),
-        }
+        if df is not None and not df.empty:
+            major_codes = ['000001', '399001', '399006', '000688', '000300', '000016', '000905']
+            indices = []
+            
+            for _, row in df.iterrows():
+                code = _safe_str(row.get('代码'))
+                if code in major_codes:
+                    indices.append({
+                        'code': code,
+                        'name': _safe_str(row.get('名称')),
+                        'price': _safe_float(row.get('最新价')),
+                        'change_pct': _safe_float(row.get('涨跌幅')),
+                        'change_val': _safe_float(row.get('涨跌额')),
+                        'volume': _safe_float(row.get('成交量')),
+                        'amount': _safe_float(row.get('成交额')),
+                        'high': _safe_float(row.get('最高')),
+                        'low': _safe_float(row.get('最低')),
+                        'open': _safe_float(row.get('今开')),
+                        'prev_close': _safe_float(row.get('昨收')),
+                    })
+            
+            if indices:
+                # 按预定义顺序排序
+                order = {c: i for i, c in enumerate(major_codes)}
+                indices.sort(key=lambda x: order.get(x['code'], 999))
+                
+                # 更新缓存
+                with _indices_cache_lock:
+                    _indices_cache_data = indices
+                    _indices_cache_timestamp = now
+                
+                print(f"[Indices] AkShare 成功获取 {len(indices)} 个指数")
+                return {
+                    'indices': indices,
+                    'timestamp': datetime.now().isoformat(),
+                    'cached': False,
+                    'source': 'akshare'
+                }
+    
     except Exception as e:
-        print(f"Error fetching market indices: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[Indices] AkShare 失败: {e}")
+    
+    # 方法2: 降级到新浪财经（数据不完整但稳定）
+    try:
+        print("[Indices] 降级到新浪财经...")
+        import requests
+        
+        # 新浪财经指数代码映射
+        sina_indices = {
+            's_sh000001': ('000001', '上证指数'),
+            's_sz399001': ('399001', '深证成指'),
+            's_sz399006': ('399006', '创业板指'),
+            's_sh000688': ('000688', '科创50'),
+            's_sh000300': ('000300', '沪深300'),
+            's_sh000016': ('000016', '上证50'),
+            's_sh000905': ('000905', '中证500'),
+        }
+        
+        codes_str = ','.join(sina_indices.keys())
+        url = f'http://hq.sinajs.cn/list={codes_str}'
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'http://finance.sina.com.cn'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=30)  # 从 10 秒增加到 30 秒
+        response.raise_for_status()
+        
+        indices = []
+        lines = response.text.strip().split('\n')
+        
+        for line in lines:
+            if not line or '=' not in line:
+                continue
+            
+            # 解析格式: var hq_str_s_sh000001="上证指数,3200.12,1.23,0.04%";
+            parts = line.split('=')
+            if len(parts) < 2:
+                continue
+            
+            sina_code = parts[0].replace('var hq_str_', '').strip()
+            if sina_code not in sina_indices:
+                continue
+            
+            code, name = sina_indices[sina_code]
+            
+            # 解析数据
+            data_str = parts[1].strip().strip('";')
+            data_parts = data_str.split(',')
+            
+            if len(data_parts) >= 4:
+                try:
+                    price = float(data_parts[1])
+                    change_val = float(data_parts[2])
+                    change_pct_str = data_parts[3].replace('%', '')
+                    change_pct = float(change_pct_str)
+                    
+                    # 计算昨收
+                    prev_close = price - change_val
+                    
+                    indices.append({
+                        'code': code,
+                        'name': name,
+                        'price': price,
+                        'change_pct': change_pct,
+                        'change_val': change_val,
+                        'prev_close': prev_close,
+                        'volume': 0,  # 新浪财经指数数据不包含成交量
+                        'amount': 0,
+                        'high': 0,
+                        'low': 0,
+                        'open': 0,
+                    })
+                except (ValueError, IndexError) as e:
+                    print(f"[Indices] 解析新浪数据失败 {sina_code}: {e}")
+                    continue
+        
+        if indices:
+            # 按预定义顺序排序
+            major_codes = ['000001', '399001', '399006', '000688', '000300', '000016', '000905']
+            order = {c: i for i, c in enumerate(major_codes)}
+            indices.sort(key=lambda x: order.get(x['code'], 999))
+            
+            # 更新缓存
+            with _indices_cache_lock:
+                _indices_cache_data = indices
+                _indices_cache_timestamp = now
+            
+            print(f"[Indices] 新浪财经成功获取 {len(indices)} 个指数")
+            return {
+                'indices': indices,
+                'timestamp': datetime.now().isoformat(),
+                'cached': False,
+                'source': 'sina'
+            }
+    
+    except Exception as e:
+        print(f"[Indices] 新浪财经也失败: {e}")
+    
+    # 所有方法都失败，返回缓存或空数据
+    if _indices_cache_data:
+        print("[Indices] 所有数据源失败，返回缓存数据")
+        return {
+            'indices': _indices_cache_data,
+            'timestamp': datetime.now().isoformat(),
+            'cached': True,
+            'warning': '所有数据源失败，使用缓存数据'
+        }
+    
+    print("[Indices] 无可用数据")
+    return {
+        'indices': [],
+        'timestamp': datetime.now().isoformat(),
+        'error': '所有数据源失败且无缓存数据'
+    }
 
+
+# 板块数据缓存
+_sectors_cache_lock = threading.Lock()
+_sectors_cache_data = None
+_sectors_cache_timestamp = 0.0
 
 @router.get("/market/sectors")
 async def get_market_sectors(
@@ -1028,21 +1197,72 @@ async def get_market_sectors(
     """
     Get industry sector performance ranking.
     """
+    global _sectors_cache_data, _sectors_cache_timestamp
+    
     try:
         loop = asyncio.get_running_loop()
-        df = await loop.run_in_executor(None, ak.stock_board_industry_name_em)
         
+        # 检查缓存（交易时间60秒，非交易时间1小时）
+        now = time.time()
+        cache_ttl = 60 if _is_trading_hours() else 3600
+        with _sectors_cache_lock:
+            if _sectors_cache_data and (now - _sectors_cache_timestamp) < cache_ttl:
+                cached = _sectors_cache_data
+                return {
+                    'top_gainers': cached['top_gainers'][:limit],
+                    'top_losers': cached['top_losers'][:limit],
+                    'timestamp': datetime.now().isoformat(),
+                    'cached': True,
+                }
+        
+        # 增加超时和重试机制
+        max_retries = 2
+        df = None
+        last_error = None
+        for retry in range(max_retries):
+            try:
+                df = await asyncio.wait_for(
+                    loop.run_in_executor(None, ak.stock_board_industry_name_em),
+                    timeout=30.0  # 30 秒超时
+                )
+                break
+            except asyncio.TimeoutError:
+                last_error = "超时"
+                if retry < max_retries - 1:
+                    print(f"[Sectors] AkShare 超时，重试 {retry + 1}/{max_retries - 1}...")
+                    await asyncio.sleep(1)
+                else:
+                    print("[Sectors] AkShare 超时，已达最大重试次数")
+            except Exception as e:
+                last_error = str(e)
+                if retry < max_retries - 1:
+                    print(f"[Sectors] AkShare 错误: {e}，重试 {retry + 1}/{max_retries - 1}...")
+                    await asyncio.sleep(1)
+                else:
+                    print(f"[Sectors] AkShare 错误，已达最大重试次数: {e}")
+        
+        # 请求失败，尝试返回缓存
         if df is None or df.empty:
-            return {'sectors': [], 'timestamp': datetime.now().isoformat()}
+            with _sectors_cache_lock:
+                if _sectors_cache_data:
+                    print(f"[Sectors] 数据源失败({last_error})，返回缓存数据")
+                    return {
+                        'top_gainers': _sectors_cache_data['top_gainers'][:limit],
+                        'top_losers': _sectors_cache_data['top_losers'][:limit],
+                        'timestamp': datetime.now().isoformat(),
+                        'cached': True,
+                        'warning': f'数据源暂不可用({last_error})，使用缓存数据',
+                    }
+            return {'top_gainers': [], 'top_losers': [], 'timestamp': datetime.now().isoformat()}
         
         # Sort by change percentage
         df['涨跌幅'] = pd.to_numeric(df['涨跌幅'], errors='coerce')
         df_sorted = df.sort_values('涨跌幅', ascending=False)
         
-        # Get top gainers and losers
-        top_gainers = []
-        for _, row in df_sorted.head(limit).iterrows():
-            top_gainers.append({
+        # Get top gainers and losers（缓存完整数据，返回时按 limit 截取）
+        all_gainers = []
+        for _, row in df_sorted.head(50).iterrows():
+            all_gainers.append({
                 'name': _safe_str(row.get('板块名称')),
                 'change_pct': _safe_float(row.get('涨跌幅')),
                 'turnover_rate': _safe_float(row.get('换手率')),
@@ -1051,9 +1271,9 @@ async def get_market_sectors(
                 'total_amount': _safe_float(row.get('总成交额')),
             })
         
-        top_losers = []
-        for _, row in df_sorted.tail(limit).iloc[::-1].iterrows():
-            top_losers.append({
+        all_losers = []
+        for _, row in df_sorted.tail(50).iloc[::-1].iterrows():
+            all_losers.append({
                 'name': _safe_str(row.get('板块名称')),
                 'change_pct': _safe_float(row.get('涨跌幅')),
                 'turnover_rate': _safe_float(row.get('换手率')),
@@ -1061,14 +1281,32 @@ async def get_market_sectors(
                 'leading_change': _safe_float(row.get('领涨股票-涨跌幅')),
                 'total_amount': _safe_float(row.get('总成交额')),
             })
+        
+        # 更新缓存
+        with _sectors_cache_lock:
+            _sectors_cache_data = {
+                'top_gainers': all_gainers,
+                'top_losers': all_losers,
+            }
+            _sectors_cache_timestamp = time.time()
         
         return {
-            'top_gainers': top_gainers,
-            'top_losers': top_losers,
+            'top_gainers': all_gainers[:limit],
+            'top_losers': all_losers[:limit],
             'timestamp': datetime.now().isoformat(),
         }
     except Exception as e:
         print(f"Error fetching market sectors: {e}")
+        # 最后兜底：返回缓存
+        with _sectors_cache_lock:
+            if _sectors_cache_data:
+                return {
+                    'top_gainers': _sectors_cache_data['top_gainers'][:limit],
+                    'top_losers': _sectors_cache_data['top_losers'][:limit],
+                    'timestamp': datetime.now().isoformat(),
+                    'cached': True,
+                    'warning': f'数据源异常({e})，使用缓存数据',
+                }
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1076,15 +1314,17 @@ async def get_market_sectors(
 async def get_northbound_flow(current_user: User = Depends(get_current_user)):
     """
     Get northbound capital flow (沪深港通).
+    优先使用 TuShare，备用 AkShare。
     """
     try:
         loop = asyncio.get_running_loop()
         
-        # Try TuShare first for northbound data
+        # 方法1: 尝试 TuShare（数据最准确）
         try:
             from src.data_sources.data_source_manager import _get_tushare_pro
             pro = _get_tushare_pro()
             if pro:
+                print("[Northbound] 尝试 TuShare...")
                 # Get recent trading dates
                 from datetime import timedelta
                 end_date = datetime.now().strftime('%Y%m%d')
@@ -1106,43 +1346,190 @@ async def get_northbound_flow(current_user: User = Depends(get_current_user)):
                     for _, row in df.head(10).iterrows():
                         recent.append({
                             'date': _safe_str(row.get('trade_date')),
-                            'north_money': _safe_float(row.get('north_money')),  # 北向资金
-                            'south_money': _safe_float(row.get('south_money')),  # 南向资金
-                            'hgt': _safe_float(row.get('hgt')),  # 沪股通
-                            'sgt': _safe_float(row.get('sgt')),  # 深股通
+                            'north_money': _safe_float(row.get('north_money')),
+                            'south_money': _safe_float(row.get('south_money')),
+                            'hgt': _safe_float(row.get('hgt')),
+                            'sgt': _safe_float(row.get('sgt')),
                         })
                     
+                    print(f"[Northbound] TuShare 成功获取数据")
                     return {
                         'today': {
                             'north_money': _safe_float(latest.get('north_money')) if latest is not None else 0,
                             'south_money': _safe_float(latest.get('south_money')) if latest is not None else 0,
                             'hgt': _safe_float(latest.get('hgt')) if latest is not None else 0,
                             'sgt': _safe_float(latest.get('sgt')) if latest is not None else 0,
+                            'hgt_net': _safe_float(latest.get('hgt')) if latest is not None else 0,
+                            'sgt_net': _safe_float(latest.get('sgt')) if latest is not None else 0,
                         },
                         'recent': recent,
                         'timestamp': datetime.now().isoformat(),
+                        'source': 'tushare'
                     }
         except Exception as e:
-            print(f"TuShare northbound failed: {e}")
+            print(f"[Northbound] TuShare 失败: {e}")
         
-        # Fallback: return empty data
+        # 方法2: 降级到 AkShare
+        try:
+            print("[Northbound] 降级到 AkShare...")
+            
+            # 增加超时和重试机制
+            max_retries = 2
+            df = None
+            for retry in range(max_retries):
+                try:
+                    # 获取沪深港通资金流向，增加超时时间
+                    df = await asyncio.wait_for(
+                        loop.run_in_executor(None, ak.stock_hsgt_fund_flow_summary_em),
+                        timeout=30.0  # 30 秒超时
+                    )
+                    break  # 成功则跳出
+                except asyncio.TimeoutError:
+                    if retry < max_retries - 1:
+                        print(f"[Northbound] AkShare 超时，重试 {retry + 1}/{max_retries - 1}...")
+                        await asyncio.sleep(1)
+                    else:
+                        print("[Northbound] AkShare 超时，已达最大重试次数")
+                        raise
+                except Exception as e:
+                    if retry < max_retries - 1:
+                        print(f"[Northbound] AkShare 错误: {e}，重试 {retry + 1}/{max_retries - 1}...")
+                        await asyncio.sleep(1)
+                    else:
+                        raise
+            
+            if df is not None and not df.empty:
+                print(f"[Northbound] AkShare 返回 {len(df)} 行数据")
+                print(f"[Northbound] 列名: {list(df.columns)}")
+                
+                # 筛选北向资金数据（沪股通和深股通）
+                df_north = df[df['资金方向'] == '北向'].copy()
+                
+                if not df_north.empty:
+                    # 按交易日排序
+                    df_north = df_north.sort_values('交易日', ascending=False)
+                    
+                    # 获取最新交易日的数据
+                    latest_date = df_north['交易日'].iloc[0]
+                    df_latest = df_north[df_north['交易日'] == latest_date]
+                    
+                    # 提取沪股通和深股通数据
+                    hgt_row = df_latest[df_latest['板块'] == '沪股通']
+                    sgt_row = df_latest[df_latest['板块'] == '深股通']
+                    
+                    hgt = _safe_float(hgt_row['资金净流入'].iloc[0]) if not hgt_row.empty else 0
+                    sgt = _safe_float(sgt_row['资金净流入'].iloc[0]) if not sgt_row.empty else 0
+                    north_money = hgt + sgt
+                    
+                    print(f"[Northbound] 最新日期: {latest_date}, 沪股通: {hgt}, 深股通: {sgt}, 合计: {north_money}")
+                    
+                    # 检查当天数据是否为0，如果不为0则更新缓存
+                    global _northbound_cache_data, _northbound_cache_date
+                    if abs(hgt) > 0.01 or abs(sgt) > 0.01:
+                        # 当天有有效数据，更新缓存
+                        with _northbound_cache_lock:
+                            _northbound_cache_date = latest_date
+                            print(f"[Northbound] 更新缓存，日期: {latest_date}")
+                    else:
+                        # 当天数据为0，检查是否有缓存数据
+                        print(f"[Northbound] 当天数据为0，检查缓存...")
+                        if _northbound_cache_data is not None and _northbound_cache_date is not None:
+                            # 使用缓存数据
+                            print(f"[Northbound] 使用缓存数据，日期: {_northbound_cache_date}")
+                            return {
+                                'today': _northbound_cache_data['today'],
+                                'recent': _northbound_cache_data.get('recent', []),
+                                'timestamp': datetime.now().isoformat(),
+                                'source': 'akshare_cached',
+                                'data_date': str(_northbound_cache_date),  # 附上数据日期
+                                'is_cached': True
+                            }
+                    
+                    # 构建历史数据（按日期聚合）
+                    recent = []
+                    unique_dates = df_north['交易日'].unique()[:10]
+                    
+                    for date in unique_dates:
+                        df_date = df_north[df_north['交易日'] == date]
+                        hgt_val = _safe_float(df_date[df_date['板块'] == '沪股通']['资金净流入'].iloc[0]) if not df_date[df_date['板块'] == '沪股通'].empty else 0
+                        sgt_val = _safe_float(df_date[df_date['板块'] == '深股通']['资金净流入'].iloc[0]) if not df_date[df_date['板块'] == '深股通'].empty else 0
+                        
+                        recent.append({
+                            'date': str(date),
+                            'north_money': hgt_val + sgt_val,
+                            'south_money': 0,
+                            'hgt': hgt_val,
+                            'sgt': sgt_val,
+                        })
+                    
+                    print(f"[Northbound] AkShare 成功获取数据")
+                    
+                    # 构建返回数据
+                    result = {
+                        'today': {
+                            'north_money': north_money,
+                            'south_money': 0,
+                            'hgt': hgt,
+                            'sgt': sgt,
+                            'hgt_net': hgt,
+                            'sgt_net': sgt,
+                        },
+                        'recent': recent,
+                        'timestamp': datetime.now().isoformat(),
+                        'source': 'akshare',
+                        'data_date': str(latest_date),  # 附上数据日期
+                    }
+                    
+                    # 如果数据有效，更新缓存
+                    if abs(hgt) > 0.01 or abs(sgt) > 0.01:
+                        with _northbound_cache_lock:
+                            _northbound_cache_data = result
+                            _northbound_cache_date = latest_date
+                            print(f"[Northbound] 缓存已更新，日期: {latest_date}")
+                    
+                    return result
+                else:
+                    print("[Northbound] AkShare 没有北向资金数据")
+        except Exception as e:
+            print(f"[Northbound] AkShare 失败: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # 所有方法都失败，返回空数据
+        print("[Northbound] 所有数据源失败")
         return {
-            'today': {'north_money': 0, 'south_money': 0, 'hgt': 0, 'sgt': 0},
+            'today': {'north_money': 0, 'south_money': 0, 'hgt': 0, 'sgt': 0, 'hgt_net': 0, 'sgt_net': 0},
             'recent': [],
             'timestamp': datetime.now().isoformat(),
-            'message': 'Northbound data unavailable',
+            'message': 'Northbound data unavailable - TuShare token not configured and AkShare failed',
         }
     except Exception as e:
-        print(f"Error fetching northbound flow: {e}")
+        print(f"[Northbound] 获取北向资金失败: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# 市场情绪缓存
+_sentiment_cache_lock = threading.Lock()
+_sentiment_cache_data = None
+_sentiment_cache_timestamp = 0.0
 
 @router.get("/market/sentiment")
 async def get_market_sentiment(current_user: User = Depends(get_current_user)):
     """
     Get market sentiment indicators (涨跌家数、涨停跌停).
     """
+    global _sentiment_cache_data, _sentiment_cache_timestamp
+    
     try:
+        # 检查缓存（交易时间60秒，非交易时间1小时）
+        now = time.time()
+        cache_ttl = 60 if _is_trading_hours() else 3600
+        with _sentiment_cache_lock:
+            if _sentiment_cache_data and (now - _sentiment_cache_timestamp) < cache_ttl:
+                return _sentiment_cache_data
+        
         loop = asyncio.get_running_loop()
         
         sentiment = {
@@ -1156,7 +1543,10 @@ async def get_market_sentiment(current_user: User = Depends(get_current_user)):
         
         try:
             # Get stock spot data to calculate up/down counts
-            df = await loop.run_in_executor(None, ak.stock_zh_a_spot_em)
+            df = await asyncio.wait_for(
+                loop.run_in_executor(None, ak.stock_zh_a_spot_em),
+                timeout=10.0
+            )
             
             if df is not None and not df.empty:
                 df['涨跌幅'] = pd.to_numeric(df['涨跌幅'], errors='coerce')
@@ -1166,35 +1556,69 @@ async def get_market_sentiment(current_user: User = Depends(get_current_user)):
                 sentiment['flat_count'] = int((df['涨跌幅'] == 0).sum())
                 sentiment['limit_up'] = int((df['涨跌幅'] >= 9.9).sum())
                 sentiment['limit_down'] = int((df['涨跌幅'] <= -9.9).sum())
+                
+                # 更新缓存
+                with _sentiment_cache_lock:
+                    _sentiment_cache_data = sentiment
+                    _sentiment_cache_timestamp = time.time()
+        except asyncio.TimeoutError:
+            print(f"[Sentiment] ak.stock_zh_a_spot_em 超时")
+            with _sentiment_cache_lock:
+                if _sentiment_cache_data:
+                    return _sentiment_cache_data
         except Exception as e:
             print(f"Error calculating sentiment: {e}")
+            with _sentiment_cache_lock:
+                if _sentiment_cache_data:
+                    return _sentiment_cache_data
         
         return sentiment
     except Exception as e:
         print(f"Error fetching market sentiment: {e}")
+        with _sentiment_cache_lock:
+            if _sentiment_cache_data:
+                return _sentiment_cache_data
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==================== Enhanced Fund Detail Endpoints ====================
 
+# ==================== Full Detail 缓存 ====================
+_full_detail_cache_lock = threading.Lock()
+_full_detail_cache: dict = {}  # {code: {'data': ..., 'timestamp': float}}
+_FULL_DETAIL_CACHE_TTL = 3600  # 1 小时缓存（基金详情数据变化不频繁）
+
+
 @router.get("/{code}/full-detail")
 async def get_fund_full_detail(
     code: str,
+    force_refresh: bool = False,
     current_user: User = Depends(get_current_user)
 ):
     """
     Get comprehensive fund details including basic info, performance, holdings, manager.
     """
     try:
+        # 检查缓存
+        if not force_refresh:
+            with _full_detail_cache_lock:
+                cached = _full_detail_cache.get(code)
+                if cached and (time.time() - cached['timestamp']) < _FULL_DETAIL_CACHE_TTL:
+                    print(f"[FullDetail] 返回缓存数据 {code}")
+                    return cached['data']
+        
         loop = asyncio.get_running_loop()
         
         # Parallel fetch all data
         async def fetch_basic_info():
             """Get detailed basic info from xueqiu."""
             try:
-                df = await loop.run_in_executor(
-                    None,
-                    lambda: ak.fund_individual_basic_info_xq(symbol=code)
+                df = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: ak.fund_individual_basic_info_xq(symbol=code)
+                    ),
+                    timeout=5.0
                 )
                 if df is not None and not df.empty:
                     # Convert to dict
@@ -1207,25 +1631,58 @@ async def get_fund_full_detail(
                         'size': _safe_str(info_dict.get('最新规模', '')),
                         'manager': _safe_str(info_dict.get('基金经理', '')),
                     }
+            except asyncio.TimeoutError:
+                print(f"[FullDetail] fetch_basic_info timeout for {code}")
             except Exception as e:
                 print(f"Error fetching basic info from xueqiu: {e}")
             # Fallback to simple lookup
             return await loop.run_in_executor(None, get_fund_basic_info, code)
         
         async def fetch_nav_history():
-            return await loop.run_in_executor(None, get_fund_nav_history, code, 365)
+            try:
+                return await asyncio.wait_for(
+                    loop.run_in_executor(None, get_fund_nav_history, code, 365),
+                    timeout=8.0
+                )
+            except asyncio.TimeoutError:
+                print(f"[FullDetail] fetch_nav_history timeout for {code}")
+                return []
         
         async def fetch_holdings():
-            return await loop.run_in_executor(None, get_fund_holdings_list, code)
+            try:
+                return await asyncio.wait_for(
+                    loop.run_in_executor(None, get_fund_holdings_list, code),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                print(f"[FullDetail] fetch_holdings timeout for {code}")
+                return []
         
         async def fetch_ranking_data():
-            """Get fund ranking data from market."""
+            """Get fund ranking data from market. 并行请求所有基金类型。"""
             try:
-                for fund_type in ["股票型", "混合型", "指数型", "债券型", "QDII", "FOF"]:
-                    df = await loop.run_in_executor(
-                        None, 
-                        lambda ft=fund_type: ak.fund_open_fund_rank_em(symbol=ft)
-                    )
+                fund_types = ["股票型", "混合型", "指数型", "债券型", "QDII", "FOF"]
+                
+                # 并行请求所有基金类型，每个加 5 秒超时
+                async def _fetch_one_type(ft):
+                    try:
+                        return ft, await asyncio.wait_for(
+                            loop.run_in_executor(None, lambda: ak.fund_open_fund_rank_em(symbol=ft)),
+                            timeout=5.0
+                        )
+                    except (asyncio.TimeoutError, Exception) as e:
+                        print(f"[FullDetail] fetch_ranking {ft} failed: {e}")
+                        return ft, None
+                
+                rank_results = await asyncio.gather(
+                    *[_fetch_one_type(ft) for ft in fund_types],
+                    return_exceptions=True
+                )
+                
+                for item in rank_results:
+                    if isinstance(item, Exception):
+                        continue
+                    fund_type, df = item
                     if df is not None and not df.empty:
                         fund_row = df[df['基金代码'] == code]
                         if not fund_row.empty:
@@ -1258,9 +1715,12 @@ async def get_fund_full_detail(
                 try:
                     # Convert fund code to TuShare format (e.g., 000001 -> 000001.OF)
                     ts_code = f"{code}.OF"
-                    df = await loop.run_in_executor(
-                        None,
-                        lambda: TS_PRO.fund_manager(ts_code=ts_code)
+                    df = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None,
+                            lambda: TS_PRO.fund_manager(ts_code=ts_code)
+                        ),
+                        timeout=5.0
                     )
                     if df is not None and not df.empty:
                         # Filter to current managers (end_date is None or empty)
@@ -1314,9 +1774,12 @@ async def get_fund_full_detail(
             
             # Fallback to xueqiu for basic info
             try:
-                df = await loop.run_in_executor(
-                    None,
-                    lambda: ak.fund_individual_basic_info_xq(symbol=code)
+                df = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: ak.fund_individual_basic_info_xq(symbol=code)
+                    ),
+                    timeout=5.0
                 )
                 if df is not None and not df.empty:
                     # Extract manager names from the basic info
@@ -1350,9 +1813,12 @@ async def get_fund_full_detail(
                 # Use current year as date parameter
                 current_year = str(datetime.now().year)
                 try:
-                    df = await loop.run_in_executor(
-                        None,
-                        lambda: ak.fund_portfolio_industry_allocation_em(symbol=code, date=current_year)
+                    df = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None,
+                            lambda: ak.fund_portfolio_industry_allocation_em(symbol=code, date=current_year)
+                        ),
+                        timeout=5.0
                     )
                 except ValueError as ve:
                     # AkShare bug: some funds have malformed data
@@ -1409,7 +1875,7 @@ async def get_fund_full_detail(
             except Exception as e:
                 print(f"Error calculating risk metrics: {e}")
         
-        return sanitize_for_json({
+        result = sanitize_for_json({
             'code': code,
             'basic_info': {
                 'name': basic_info.get('name', code) if basic_info else code,
@@ -1435,6 +1901,15 @@ async def get_fund_full_detail(
             ),
             'timestamp': datetime.now().isoformat(),
         })
+        
+        # 写入缓存
+        with _full_detail_cache_lock:
+            _full_detail_cache[code] = {
+                'data': result,
+                'timestamp': time.time(),
+            }
+        
+        return result
     except HTTPException:
         raise
     except Exception as e:

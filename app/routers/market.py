@@ -79,10 +79,11 @@ async def search_market_funds_alt(query: str = ""):
 @router.get("/api/market/indices")
 def get_market_indices():
     """
-    Get market indices with TuShare + yFinance hybrid approach.
+    Get market indices with multi-source fallback.
+    Priority: Sina Finance -> AkShare
     """
-    from config.settings import DATA_SOURCE_PROVIDER
-
+    import requests
+    
     now_ts = time.time()
     now_dt = datetime.now()
     current_hm = now_dt.hour * 100 + now_dt.minute
@@ -92,21 +93,83 @@ def get_market_indices():
     if cached:
         return cached
 
-    # # Try TuShare first
-    # if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
-    #     try:
-    #         from src.data_sources.data_source_manager import get_market_indices_from_tushare
-    #         results = get_market_indices_from_tushare()
-
-    #         if results:
-    #             data = sanitize_data(results)
-    #             indices_cache.set(data, ttl_seconds=60)
-    #             return data
-    #     except Exception as e:
-    #         print(f"TuShare indices failed: {e}")
-
-    # Fallback to AkShare
+    # Method 1: Try Sina Finance (free, stable)
     try:
+        print("[Indices] Trying Sina Finance API...")
+        
+        # 新浪财经指数代码映射
+        sina_indices = {
+            's_sh000001': '上证指数',
+            's_sz399001': '深证成指',
+            's_sz399006': '创业板指',
+            'hsi': '恒生指数',
+            'int_nikkei': '日经225',
+            'int_nasdaq': '纳斯达克',
+            'int_dji': '道琼斯',
+            'int_sp500': '标普500'
+        }
+        
+        codes_str = ','.join(sina_indices.keys())
+        url = f'http://hq.sinajs.cn/list={codes_str}'
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'http://finance.sina.com.cn'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            results = []
+            lines = response.text.strip().split('\n')
+            
+            for line in lines:
+                if not line or '=""' in line:
+                    continue
+                
+                try:
+                    # 格式: var hq_str_s_sh000001="上证指数,3000.00,..."
+                    parts = line.split('="')
+                    if len(parts) < 2:
+                        continue
+                    
+                    # 提取指数代码
+                    code_part = parts[0].split('_')[-1]
+                    
+                    # 解析数据
+                    data_str = parts[1].rstrip('";')
+                    data = data_str.split(',')
+                    
+                    if len(data) < 4:
+                        continue
+                    
+                    name = data[0]
+                    current_price = float(data[1]) if data[1] else 0
+                    change_val = float(data[2]) if data[2] else 0
+                    change_pct = float(data[3]) if data[3] else 0
+                    
+                    if current_price > 0:
+                        results.append({
+                            "name": name,
+                            "code": code_part,
+                            "price": round(current_price, 2),
+                            "change_pct": round(change_pct, 2),
+                            "change_val": round(change_val, 2)
+                        })
+                except Exception as e:
+                    print(f"[Indices] Failed to parse line: {e}")
+                    continue
+            
+            if results:
+                print(f"[Indices] Got {len(results)} indices from Sina Finance")
+                data = sanitize_data(results)
+                indices_cache.set(data, ttl_seconds=60)
+                return data
+    except Exception as e:
+        print(f"[Indices] Sina Finance failed: {e}")
+
+    # Method 2: Fallback to AkShare
+    try:
+        print("[Indices] Trying AkShare API...")
         indices_df = ak.index_global_spot_em()
 
         target_names = [
@@ -132,15 +195,25 @@ def get_market_indices():
         data = sanitize_data(results)
 
         if data:
+            print(f"[Indices] Got {len(data)} indices from AkShare")
             indices_cache.set(data, ttl_seconds=60)
 
         return data
     except Exception as e:
-        print(f"Error fetching indices via index_global_spot_em: {e}")
+        print(f"[Indices] AkShare failed: {e}")
+        
+        # Return cached data if available
         cached = indices_cache.get()
         if cached:
+            print("[Indices] Returning cached data")
             return cached
-        return []
+        
+        # Return empty with error info
+        return {
+            "indices": [],
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e)
+        }
 
 
 @router.get("/api/market/stocks")

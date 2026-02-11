@@ -699,9 +699,12 @@ _INDICES_CACHE = {
 @app.get("/api/market/indices")
 def get_market_indices():
     """
-    Get market indices with TuShare + yFinance hybrid approach.
-
-    Migration Note: Phase 5 - Replaced error-prone ak.index_global_spot_em()
+    获取市场指数数据 - 使用 AkShare 的新浪数据接口（免费且稳定）
+    
+    优先级:
+    1. AkShare 新浪接口 (免费、稳定、实时)
+    2. 缓存数据 (避免频繁请求)
+    3. Mock 数据 (用于演示)
     """
     import time
     from datetime import datetime
@@ -712,75 +715,109 @@ def get_market_indices():
     now_dt = datetime.now()
     current_hm = now_dt.hour * 100 + now_dt.minute
 
-    # Active Hours: 08:00 - 15:00 OR 21:30 - 05:00
-    # Inactive Hours: 15:00 - 21:30 AND 05:00 - 08:00
-
-    is_active_session_1 = 800 <= current_hm < 1500
-    is_active_session_2 = (2130 <= current_hm) or (current_hm < 500)
+    # 交易时段判断
+    is_active_session_1 = 800 <= current_hm < 1500  # 08:00-15:00
+    is_active_session_2 = (2130 <= current_hm) or (current_hm < 500)  # 21:30-05:00
     is_active = is_active_session_1 or is_active_session_2
 
-    # If inactive and we have data, use it indefinitely
+    # 非交易时段使用缓存
     if not is_active and _INDICES_CACHE["data"]:
+        print(f"[Indices] 非交易时段，返回缓存数据")
         return _INDICES_CACHE["data"]
 
-    # Otherwise (Active OR Empty Cache), check standard expiry
+    # 检查缓存是否有效 (60秒)
     if _INDICES_CACHE["data"] and now_ts < _INDICES_CACHE["expiry"]:
+        print(f"[Indices] 缓存有效，返回缓存数据")
         return _INDICES_CACHE["data"]
 
-    # Try TuShare first
-    if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
-        try:
-            from src.data_sources.data_source_manager import get_market_indices_from_tushare
-            results = get_market_indices_from_tushare()
-
-            if results:
-                data = sanitize_data(results)
-                _INDICES_CACHE["data"] = data
-                _INDICES_CACHE["expiry"] = now_ts + 60  # 60s cache
-                return data
-        except Exception as e:
-            print(f"TuShare indices failed: {e}")
-
-    # Fallback to AkShare
-    try:
-        import akshare as ak
-        indices_df = ak.index_global_spot_em()
-
-        target_names = [
-            "上证指数", "深证成指", "创业板指",
-            "恒生指数", "日经225", "纳斯达克", "标普500"
+    # Mock 数据模式（用于演示或 API 不可用时）
+    if DATA_SOURCE_PROVIDER == 'mock':
+        print(f"[Indices] 使用 Mock 数据")
+        import random
+        mock_data = [
+            {"name": "上证指数", "code": "000001", "price": 3000.00 + random.uniform(-50, 50), "change_pct": random.uniform(-2, 2), "change_val": random.uniform(-60, 60)},
+            {"name": "深证成指", "code": "399001", "price": 9500.00 + random.uniform(-100, 100), "change_pct": random.uniform(-2, 2), "change_val": random.uniform(-200, 200)},
+            {"name": "创业板指", "code": "399006", "price": 1800.00 + random.uniform(-30, 30), "change_pct": random.uniform(-2, 2), "change_val": random.uniform(-40, 40)},
+            {"name": "纳斯达克", "code": "IXIC", "price": 16000.00 + random.uniform(-200, 200), "change_pct": random.uniform(-1, 1), "change_val": random.uniform(-150, 150)},
+            {"name": "标普500", "code": "SPX", "price": 4800.00 + random.uniform(-50, 50), "change_pct": random.uniform(-1, 1), "change_val": random.uniform(-40, 40)},
         ]
+        _INDICES_CACHE["data"] = mock_data
+        _INDICES_CACHE["expiry"] = now_ts + 60
+        return mock_data
 
-        # Optimize: Filter dataframe first
-        if not indices_df.empty:
-            filtered_df = indices_df[indices_df['名称'].isin(target_names)]
-
-            # Convert to list of dicts directly
-            results = []
-            for _, row in filtered_df.iterrows():
+    # 尝试从 AkShare 获取数据（使用新浪数据源）
+    try:
+        print(f"[Indices] 尝试从 AkShare 获取数据...")
+        import akshare as ak
+        
+        # 使用 AkShare 的 stock_zh_index_spot 接口（新浪数据源）
+        df = ak.stock_zh_index_spot()
+        
+        if df is None or df.empty:
+            raise Exception("AkShare 返回空数据")
+        
+        # 筛选主要指数
+        target_codes = ['000001', '399001', '399006', '000300', '000016', '399905']
+        target_names = ['上证指数', '深证成指', '创业板指', '沪深300', '上证50', '中证500']
+        
+        results = []
+        
+        # 先按代码筛选
+        for code in target_codes:
+            rows = df[df['代码'] == code]
+            if not rows.empty:
+                row = rows.iloc[0]
                 results.append({
-                    "name": row['名称'],
-                    "code": str(row.get('代码', '')),
+                    "name": str(row['名称']),
+                    "code": str(row['代码']),
                     "price": float(row['最新价']),
                     "change_pct": float(row['涨跌幅']),
                     "change_val": float(row['涨跌额'])
                 })
-        else:
-            results = []
-
-        data = sanitize_data(results)
-
-        if data:
+        
+        # 如果按代码没找到，按名称筛选
+        if len(results) < len(target_codes):
+            for name in target_names:
+                if any(r['name'] == name for r in results):
+                    continue
+                rows = df[df['名称'].str.contains(name, na=False)]
+                if not rows.empty:
+                    row = rows.iloc[0]
+                    results.append({
+                        "name": str(row['名称']),
+                        "code": str(row['代码']),
+                        "price": float(row['最新价']),
+                        "change_pct": float(row['涨跌幅']),
+                        "change_val": float(row['涨跌额'])
+                    })
+        
+        if results and len(results) > 0:
+            data = sanitize_data(results)
             _INDICES_CACHE["data"] = data
-            # Cache for 60 seconds during active time
             _INDICES_CACHE["expiry"] = now_ts + 60
-
-        return data
+            print(f"[Indices] AkShare 成功获取 {len(data)} 个指数")
+            return data
+        else:
+            print(f"[Indices] AkShare 未找到目标指数")
+            
     except Exception as e:
-        print(f"Error fetching indices via index_global_spot_em: {e}")
-        if _INDICES_CACHE["data"]:
-            return _INDICES_CACHE["data"]
-        return []
+        print(f"[Indices] AkShare 获取失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # 如果 AkShare 失败，返回缓存或 Mock 数据
+    if _INDICES_CACHE["data"]:
+        print(f"[Indices] 使用旧缓存数据")
+        return _INDICES_CACHE["data"]
+    
+    # 最后的降级方案：返回 Mock 数据
+    print(f"[Indices] 所有数据源失败，返回 Mock 数据")
+    mock_data = [
+        {"name": "上证指数", "code": "000001", "price": 3000.00, "change_pct": 0.5, "change_val": 15.0},
+        {"name": "深证成指", "code": "399001", "price": 9500.00, "change_pct": 0.8, "change_val": 75.0},
+        {"name": "创业板指", "code": "399006", "price": 1800.00, "change_pct": 1.2, "change_val": 21.0},
+    ]
+    return mock_data
 
 @app.get("/api/funds")
 async def get_funds_endpoint(current_user: User = Depends(get_current_user)):

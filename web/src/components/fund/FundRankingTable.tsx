@@ -86,7 +86,7 @@ export default function FundRankingTable({ initialFundType = '股票型', onFund
   const renderReturnValue = (value: number | undefined) => {
     if (value === undefined || value === null) return '-';
     const isPositive = value > 0;
-    const color = isPositive ? '#22c55e' : value < 0 ? '#ef4444' : '#64748b';
+    const color = isPositive ? '#ef4444' : value < 0 ? '#22c55e' : '#64748b';
     
     return (
       <Typography

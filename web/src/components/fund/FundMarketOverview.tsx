@@ -78,7 +78,7 @@ export default function FundMarketOverview() {
 
   const renderChangeValue = (value: number, suffix: string = '%', showIcon: boolean = true) => {
     const isPositive = value > 0;
-    const color = isPositive ? '#22c55e' : value < 0 ? '#ef4444' : '#64748b';
+    const color = isPositive ? '#ef4444' : value < 0 ? '#22c55e' : '#64748b';
 
     return (
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.3 }}>
@@ -104,8 +104,8 @@ export default function FundMarketOverview() {
   // 渲染主要指数卡片
   const renderIndexCard = (index: MarketIndex) => {
     const isPositive = index.change_pct > 0;
-    const color = isPositive ? '#22c55e' : index.change_pct < 0 ? '#ef4444' : '#64748b';
-    const bgColor = isPositive ? '#f0fdf4' : index.change_pct < 0 ? '#fef2f2' : '#f8fafc';
+    const color = isPositive ? '#ef4444' : index.change_pct < 0 ? '#22c55e' : '#64748b';
+    const bgColor = isPositive ? '#fef2f2' : index.change_pct < 0 ? '#f0fdf4' : '#f8fafc';
 
     return (
       <Paper
@@ -165,7 +165,7 @@ export default function FundMarketOverview() {
 
   // 渲染行业板块
   const renderSectorItem = (sector: SectorItem, isGainer: boolean) => {
-    const color = isGainer ? '#22c55e' : '#ef4444';
+    const color = isGainer ? '#ef4444' : '#22c55e';
     return (
       <Box
         key={sector.name}
@@ -217,8 +217,8 @@ export default function FundMarketOverview() {
       <Box sx={{ mt: 2 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#22c55e' }} />
-            <Typography sx={{ fontSize: '0.7rem', color: '#22c55e', fontWeight: 600 }}>
+            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#ef4444' }} />
+            <Typography sx={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 600 }}>
               上涨 {sentiment.up_count}
             </Typography>
           </Box>
@@ -229,8 +229,8 @@ export default function FundMarketOverview() {
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#ef4444' }} />
-            <Typography sx={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 600 }}>
+            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#22c55e' }} />
+            <Typography sx={{ fontSize: '0.7rem', color: '#22c55e', fontWeight: 600 }}>
               下跌 {sentiment.down_count}
             </Typography>
           </Box>
@@ -244,9 +244,9 @@ export default function FundMarketOverview() {
             bgcolor: '#f1f5f9',
           }}
         >
-          <Box sx={{ width: `${upPct}%`, bgcolor: '#22c55e', transition: 'width 0.3s' }} />
+          <Box sx={{ width: `${upPct}%`, bgcolor: '#ef4444', transition: 'width 0.3s' }} />
           <Box sx={{ width: `${100 - upPct - downPct}%`, bgcolor: '#94a3b8', transition: 'width 0.3s' }} />
-          <Box sx={{ width: `${downPct}%`, bgcolor: '#ef4444', transition: 'width 0.3s' }} />
+          <Box sx={{ width: `${downPct}%`, bgcolor: '#22c55e', transition: 'width 0.3s' }} />
         </Box>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 1.5 }}>
           <Chip
@@ -254,8 +254,8 @@ export default function FundMarketOverview() {
             label={`涨停 ${sentiment.limit_up}`}
             size="small"
             sx={{
-              bgcolor: '#dcfce7',
-              color: '#16a34a',
+              bgcolor: '#fee2e2',
+              color: '#dc2626',
               fontWeight: 600,
               fontSize: '0.7rem',
             }}
@@ -265,8 +265,8 @@ export default function FundMarketOverview() {
             label={`跌停 ${sentiment.limit_down}`}
             size="small"
             sx={{
-              bgcolor: '#fee2e2',
-              color: '#dc2626',
+              bgcolor: '#dcfce7',
+              color: '#16a34a',
               fontWeight: 600,
               fontSize: '0.7rem',
             }}
@@ -281,7 +281,7 @@ export default function FundMarketOverview() {
     if (!northbound?.today) return null;
     const { today } = northbound;
     const isInflow = today.north_money > 0;
-    const color = isInflow ? '#22c55e' : '#ef4444';
+    const color = isInflow ? '#ef4444' : '#22c55e';
 
     return (
       <Box>
@@ -318,7 +318,7 @@ export default function FundMarketOverview() {
                 sx={{
                   fontSize: '1rem',
                   fontWeight: 700,
-                  color: today.hgt > 0 ? '#22c55e' : '#ef4444',
+                  color: today.hgt > 0 ? '#ef4444' : '#22c55e',
                   fontFamily: 'JetBrains Mono',
                 }}
               >
@@ -343,7 +343,7 @@ export default function FundMarketOverview() {
                 sx={{
                   fontSize: '1rem',
                   fontWeight: 700,
-                  color: today.sgt > 0 ? '#22c55e' : '#ef4444',
+                  color: today.sgt > 0 ? '#ef4444' : '#22c55e',
                   fontFamily: 'JetBrains Mono',
                 }}
               >
@@ -456,7 +456,7 @@ export default function FundMarketOverview() {
               
               <Grid container spacing={2}>
                 <Grid size={6}>
-                  <Typography sx={{ fontSize: '0.7rem', color: '#22c55e', fontWeight: 600, mb: 1 }}>
+                  <Typography sx={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 600, mb: 1 }}>
                     🔥 领涨板块
                   </Typography>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
@@ -464,7 +464,7 @@ export default function FundMarketOverview() {
                   </Box>
                 </Grid>
                 <Grid size={6}>
-                  <Typography sx={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 600, mb: 1 }}>
+                  <Typography sx={{ fontSize: '0.7rem', color: '#22c55e', fontWeight: 600, mb: 1 }}>
                     ❄️ 领跌板块
                   </Typography>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>

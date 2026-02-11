@@ -139,12 +139,16 @@ class EquityStrategy(AnalysisStrategy):
             # Add sources
             if res.get('announcements'):
                 for a in res['announcements']:
-                    self._add_source("📢 公告", f"[{h['name']}] {a.get('title')}", a.get('url'))
-                    deep_out.append(f"- {h['name']}公告: {a.get('title')}")
+                    # 确保 a 是字典类型
+                    if isinstance(a, dict):
+                        self._add_source("📢 公告", f"[{h['name']}] {a.get('title')}", a.get('url'))
+                        deep_out.append(f"- {h['name']}公告: {a.get('title')}")
             if res.get('analyst_reports'):
                 for r in res['analyst_reports']:
-                    self._add_source("📊 研报", f"[{h['name']}] {r.get('title')}", r.get('url'))
-                    deep_out.append(f"- {h['name']}研报: {r.get('title')}")
+                    # 确保 r 是字典类型
+                    if isinstance(r, dict):
+                        self._add_source("📊 研报", f"[{h['name']}] {r.get('title')}", r.get('url'))
+                        deep_out.append(f"- {h['name']}研报: {r.get('title')}")
 
         return "\n".join(output), "\n".join(deep_out), holdings_list
 

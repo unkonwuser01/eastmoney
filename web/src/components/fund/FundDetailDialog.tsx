@@ -69,7 +69,7 @@ export default function FundDetailDialog({ open, onClose, fundCode, fundName }: 
 
   const getColorByValue = (value: number | undefined | null) => {
     if (value === null || value === undefined) return '#94a3b8';
-    return value > 0 ? '#22c55e' : value < 0 ? '#ef4444' : '#64748b';
+    return value > 0 ? '#ef4444' : value < 0 ? '#22c55e' : '#64748b';
   };
 
   // 净值走势图
@@ -99,7 +99,7 @@ export default function FundDetailDialog({ open, onClose, fundCode, fundName }: 
     }).join(' ');
 
     const isUp = data[data.length - 1].value >= data[0].value;
-    const lineColor = isUp ? '#22c55e' : '#ef4444';
+    const lineColor = isUp ? '#ef4444' : '#22c55e';
 
     return (
       <Box sx={{ bgcolor: '#fcfcfc', p: 2, borderRadius: '12px', border: '1px solid #f1f5f9' }}>
@@ -236,7 +236,7 @@ export default function FundDetailDialog({ open, onClose, fundCode, fundName }: 
                   borderRadius: '10px',
                   border: '1px solid #f1f5f9',
                   textAlign: 'center',
-                  bgcolor: item.value && item.value > 0 ? '#f0fdf4' : item.value && item.value < 0 ? '#fef2f2' : '#f8fafc',
+                  bgcolor: item.value && item.value > 0 ? '#fef2f2' : item.value && item.value < 0 ? '#f0fdf4' : '#f8fafc',
                 }}
               >
                 <Typography sx={{ fontSize: '0.6rem', color: '#64748b', mb: 0.5 }}>{item.label}</Typography>
@@ -507,7 +507,7 @@ export default function FundDetailDialog({ open, onClose, fundCode, fundName }: 
                   </Box>
                 </Grid>
                 <Grid size={6}>
-                  <Box sx={{ p: 1.5, bgcolor: manager.tenure_return >= 0 ? '#f0fdf4' : '#fef2f2', borderRadius: '8px', textAlign: 'center' }}>
+                  <Box sx={{ p: 1.5, bgcolor: manager.tenure_return >= 0 ? '#fef2f2' : '#f0fdf4', borderRadius: '8px', textAlign: 'center' }}>
                     <Typography sx={{ fontSize: '0.6rem', color: '#94a3b8', mb: 0.5 }}>任期回报</Typography>
                     <Typography
                       sx={{
